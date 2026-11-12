@@ -45,3 +45,6 @@ server.key
 *.log
 *.tmp
 bridge.log
+
+dist/
+
