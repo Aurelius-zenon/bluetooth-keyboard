@@ -144,23 +144,53 @@ SHIFT_SYMBOL_TO_BASE: dict[str, tuple[str, str]] = {
 _user32 = ctypes.WinDLL('user32', use_last_error=True)
 _user32.SendInput.restype = ctypes.c_uint
 _user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+_user32.GetWindowTextLengthW.restype = ctypes.c_int
+_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+# 运行统计（供 /diag 查询，用于定位"按键到底发给谁了"）
+_stats = {
+    'sent': 0, 'failed': 0,
+    'last_key': '', 'last_combo': '', 'last_fg': '',
+    'last_ok': None, 'last_err': 0, 'last_ts': 0.0,
+    'elevated': False,
+}
+_last_foreground = ''
 
 
-def send_vk(vk_code: int, is_up: bool = False):
-    """发送一个虚拟键码 keyDown 或 keyUp"""
+def send_vk(vk_code: int, is_up: bool = False) -> bool:
+    """发送一个虚拟键码 keyDown 或 keyUp，返回是否成功"""
     inp = INPUT(type=INPUT_KEYBOARD)
     inp.ki.wVk = vk_code
     inp.ki.wScan = 0
     inp.ki.dwFlags = KEYEVENTF_KEYUP if is_up else 0
     inp.ki.time = 0
     inp.ki.dwExtraInfo = None
-    _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+    sent = _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+    if sent != 1:
+        _stats['last_err'] = ctypes.get_last_error()
+        return False
+    return True
 
 
-def press_vk(vk_code: int):
+def _foreground_title() -> str:
+    """当前前台窗口标题 —— SendInput 只会把键发到这里"""
+    try:
+        hwnd = _user32.GetForegroundWindow()
+        n = _user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        _user32.GetWindowTextW(hwnd, buf, n + 1)
+        return buf.value or '(无标题窗口)'
+    except Exception:
+        return '(读取失败)'
+
+
+def press_vk(vk_code: int) -> bool:
     """单次按键：keyDown → keyUp"""
-    send_vk(vk_code, is_up=False)
-    send_vk(vk_code, is_up=True)
+    a = send_vk(vk_code, is_up=False)
+    b = send_vk(vk_code, is_up=True)
+    return a and b
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +285,25 @@ _start_time = time.monotonic()
 
 def _consumer_loop():
     """单消费者线程：串行消费队列，调用 SendInput"""
+    global _last_foreground
     while True:
         cmd = _command_queue.get()
+        fg = _foreground_title()
+        before_fail = _stats['failed']
         try:
             send_command(cmd)
         except Exception as e:
-            print(f"  [bridge] ⚠ consumer error: {e}", file=sys.stderr)
+            _stats['failed'] += 1
+            _stats['last_err'] = str(e)
+            print(f"  [bridge] consumer error: {e}", file=sys.stderr)
+
+        _stats['sent'] += 1
+        _stats['last_key'] = cmd.get('key', '')
+        _stats['last_combo'] = cmd.get('combo') or ''
+        _stats['last_fg'] = fg
+        _stats['last_ok'] = (_stats['failed'] == before_fail)
+        _stats['last_ts'] = time.time()
+        _last_foreground = fg
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +340,31 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 'queue_size': _command_queue.qsize(),
                 'uptime_s': round(time.monotonic() - _start_time, 1),
                 'mode': 'ctypes-sendinput',
+            }).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 诊断：按键发给了哪个窗口、SendInput 是否成功
+        if path == '/diag':
+            body = json.dumps({
+                'ok': True,
+                'foreground': _foreground_title(),
+                'queue_size': _command_queue.qsize(),
+                'elevated': _stats['elevated'],
+                'last': {
+                    'key': _stats['last_key'],
+                    'combo': _stats['last_combo'],
+                    'target_window': _stats['last_fg'],
+                    'ok': _stats['last_ok'],
+                    'err': _stats['last_err'],
+                    'ago_s': round(time.time() - _stats['last_ts'], 1) if _stats['last_ts'] else None,
+                },
+                'sent': _stats['sent'],
+                'failed': _stats['failed'],
             }).encode()
             self.send_response(200)
             self._cors()
@@ -401,6 +469,11 @@ def main():
         s.close()
     except Exception:
         pass
+
+    try:
+        _stats['elevated'] = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        _stats['elevated'] = False
 
     print()
     print("╔══════════════════════════════════════════════════╗")

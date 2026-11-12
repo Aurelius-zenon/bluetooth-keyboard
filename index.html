@@ -450,19 +450,38 @@
 
   let pingCtrl = null;
   async function ping(){
-    const dot = $('#dot');
     try{
       if (pingCtrl) pingCtrl.abort();
       pingCtrl = new AbortController();
       const t = setTimeout(() => pingCtrl.abort(), 1600);
-      const r = await fetch(st.base + '/ping', {signal: pingCtrl.signal, cache:'no-store'});
+      const r = await fetch(st.base + '/diag', {signal: pingCtrl.signal, cache:'no-store'});
       clearTimeout(t);
-      const j = await r.json();
-      setOnline(!!j.ok);
+      const d = await r.json();
+      setOnline(!!d.ok);
+      if (d.ok){
+        const last = d.last || {};
+        const fg = d.foreground || '';
+        const stEl = $('#st');
+        if (last.ok === false){
+          stEl.textContent = '注入失败 · 错误 ' + (last.err || '?');
+        } else if (last.target_window){
+          stEl.textContent = '已连接 · 目标：' + shortWin(last.target_window);
+        } else {
+          stEl.textContent = '已连接 · 当前：' + shortWin(fg);
+        }
+        if (!d.elevated){
+          stEl.title = '非管理员运行：无法向管理员权限的程序输入';
+        }
+      }
     }catch(e){
-      // 同源探测失败时再试本机默认端口
       setOnline(false);
     }
+  }
+
+  function shortWin(t){
+    if (!t) return '未知窗口';
+    const s = t.replace(/\s*-\s*(Google Chrome|Microsoft Edge|记事本|Notepad).*$/i, '');
+    return s.length > 14 ? s.slice(0, 14) + '…' : s;
   }
 
   /* ================= 设置面板 ================= */
