@@ -19,6 +19,11 @@ android/
 ios/
 package-lock.json
 
+# Bubblewrap 生成物
+android-twa/app/
+android-twa/build/
+android-twa/.gradle/
+
 # IDE
 .vscode/
 .idea/
