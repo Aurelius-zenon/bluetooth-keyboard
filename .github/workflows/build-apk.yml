@@ -28,86 +28,71 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Diagnostics
-        run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME" 2>/dev/null | head -20
-
-      - name: Ensure signing keystore
-        working-directory: android-twa
-        run: |
-          if [ ! -f android.keystore ]; then
-            keytool -genkeypair -v \
-              -keystore android.keystore -alias android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$KS_PASS" -keypass "$KS_PASS" \
-              -dname "CN=Bluetooth Keyboard, OU=App, O=Personal, L=NA, ST=NA, C=CN"
-          fi
-          keytool -list -v -keystore android.keystore -alias android -storepass "$KS_PASS" | grep "SHA256:" | head -1
-
-      - name: Sync assetlinks fingerprint
-        run: |
-          FP=$(keytool -list -v -keystore android-twa/android.keystore -alias android -storepass "$KS_PASS" \
-               | grep "SHA256:" | head -1 | sed 's/.*SHA256: //' | tr -d ' ')
-          echo "Fingerprint: $FP"
-          mkdir -p .well-known
-          cat > .well-known/assetlinks.json <<EOF
-          [
-            {
-              "relation": ["delegate_permission/common.handle_all_urls"],
-              "target": {
-                "namespace": "android_app",
-                "package_name": "com.bluetoothkeyboard.app",
-                "sha256_cert_fingerprints": ["$FP"]
-              }
-            }
-          ]
-          EOF
-          cat .well-known/assetlinks.json
-
-      - name: Commit keystore and assetlinks
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f android-twa/android.keystore .well-known/assetlinks.json
-          git diff --staged --quiet || git commit -m "ci: 持久化签名密钥与 assetlinks"
-          git push
-
-      - name: Install Bubblewrap
-        run: npm install -g @bubblewrap/cli && bubblewrap --version
-
-      - name: Configure Bubblewrap
-        run: |
-          mkdir -p "$HOME/.bubblewrap"
-          printf '{"jdkPath":"%s","androidSdkPath":"%s"}\n' "$JAVA_HOME" "$ANDROID_HOME" > "$HOME/.bubblewrap/config.json"
-          cat "$HOME/.bubblewrap/config.json"
-
-      - name: Build TWA
+      - name: Build (traced)
         id: twabuild
-        working-directory: android-twa
         continue-on-error: true
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ env.KS_PASS }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ env.KS_PASS }}
         run: |
-          bubblewrap build --skipPwaValidation 2>&1 | tee build.log
-          exit ${PIPESTATUS[0]}
+          exec > >(tee ci-build.log) 2>&1
+          set -x
+          echo "=== env ==="
+          java -version || true
+          npm -v || true
+          node -v || true
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -d /usr/local/lib/android/sdk 2>/dev/null || true
 
-      - name: Publish build log on failure
-        if: steps.twabuild.outcome == 'failure'
+          echo "=== install bubblewrap ==="
+          npm install -g @bubblewrap/cli
+          bubblewrap --version || true
+
+          echo "=== configure ==="
+          mkdir -p "$HOME/.bubblewrap"
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}\n' "$JAVA_HOME" "$ANDROID_HOME" > "$HOME/.bubblewrap/config.json"
+          cat "$HOME/.bubblewrap/config.json"
+
+          echo "=== keystore ==="
+          cd android-twa
+          if [ ! -f android.keystore ]; then
+            keytool -genkeypair -v -keystore android.keystore -alias android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$KS_PASS" -keypass "$KS_PASS" \
+              -dname "CN=Bluetooth Keyboard, OU=App, O=Personal, L=NA, ST=NA, C=CN"
+          fi
+          keytool -list -v -keystore android.keystore -alias android -storepass "$KS_PASS" | grep SHA256
+
+          echo "=== assetlinks ==="
+          FP=$(keytool -list -v -keystore android.keystore -alias android -storepass "$KS_PASS" | grep SHA256 | head -1 | sed 's/.*SHA256: //' | tr -d ' ')
+          echo "FP=$FP"
+          cd ..
+          mkdir -p .well-known
+          printf '[\n  {\n    "relation": ["delegate_permission/common.handle_all_urls"],\n    "target": {\n      "namespace": "android_app",\n      "package_name": "com.bluetoothkeyboard.app",\n      "sha256_cert_fingerprints": ["%s"]\n    }\n  }\n]\n' "$FP" > .well-known/assetlinks.json
+
+          echo "=== build ==="
+          cd android-twa
+          bubblewrap build --skipPwaValidation
+
+          echo "=== outputs ==="
+          ls -la *.apk *.aab || true
+
+      - name: Persist trace and artifacts
+        if: always()
         run: |
-          cp android-twa/build.log build-failure.log
+          [ -f ci-build.log ] || echo "no trace" > ci-build.log
+          cp ci-build.log build-failure.log
+          cp android-twa/build.log android-twa-build.log 2>/dev/null || true
+          mkdir -p .well-known
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f build-failure.log
-          git commit -m "ci: 记录 APK 构建失败日志" || true
+          git add -f build-failure.log android-twa-build.log .well-known/assetlinks.json android-twa/android.keystore 2>/dev/null || true
+          git commit -m "ci: 构建追踪日志" || true
           git push || true
-
-      - name: List outputs
-        if: always()
-        run: ls -la android-twa/*.apk android-twa/*.aab || true
+          echo "--- last 60 lines ---"
+          tail -n 60 ci-build.log || true
 
       - name: Upload APK artifact
         if: steps.twabuild.outcome == 'success'
