@@ -18,47 +18,34 @@
 
 ## 📦 APK 方案 B：本地 Capacitor 打包（需要 Android Studio）
 
-前置：Node.js + Java JDK 17 + Android Studio
+工程已生成在 `android/`，日常只需：
 
 ```powershell
-# 1. 进入目录
 cd f:\keyboard\bluetooth-keyboard
-
-# 2. 安装 Capacitor
-npm init -y
-npm install @capacitor/core @capacitor/cli @capacitor/android
-
-# 3. 添加 Android 平台
-npx cap add android
-
-# 4. 同步（把 HTML/JS/CSS 复制到 android 工程）
-npx cap sync android
-
-# 5. 打开 Android Studio
-npx cap open android
-
-# 6. Android Studio: Build → Build APK → 传到平板安装
+npm install          # 首次
+npm run sync         # 把 index.html / sw.js / manifest / icons 同步进 www 与 android assets
+npm run apk          # 需要 ANDROID_HOME；或在 Android Studio 里 Build APK
 ```
 
-### Capacitor 额外配置（重要：横屏锁定）
+`npm run apk` 产物：`android/app/build/outputs/apk/debug/app-debug.apk`
 
-打开 `android/app/src/main/AndroidManifest.xml`，在 `<activity>` 里加：
+### 已内置的原生能力
 
-```xml
-android:screenOrientation="sensorLandscape"
-android:configChanges="orientation|screenSize|keyboardHidden"
-android:resizeableActivity="false"
-```
+| 能力 | 实现 |
+|------|------|
+| 横屏锁定 | `AndroidManifest.xml` → `screenOrientation="sensorLandscape"` |
+| 手势锁定 · 沉浸式 | `MainActivity.applyImmersive()`（隐藏系统栏，刘海屏 shortEdges） |
+| 手势锁定 · 边缘屏蔽 | `MainActivity.applyExclusion()` → `setSystemGestureExclusionRects`（左右各 200dp，系统上限） |
+| 网页调用入口 | `GestureGuardPlugin`（`Capacitor.Plugins.GestureGuard.setLock({on:true})`）+ `window.NativeGestureGuard` 兜底 |
+| 局域网 http 桥接 | `res/xml/network_security_config.xml` 允许明文 + 信任用户 CA |
+| 屏幕常亮 | `FLAG_KEEP_SCREEN_ON` |
 
-### 沉浸式全屏（Edge-to-Edge）
+> 系统级边缘返回/三指截屏属于 Android 平台行为，200dp 屏蔽区是系统允许的上限，无法做到全屏屏蔽。
 
-`android/app/src/main/res/values/styles.xml`：
+### 📌 部署包须知
 
-```xml
-<item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-<item name="android:windowTranslucentStatus">true</item>
-<item name="android:windowTranslucentNavigation">true</item>
-```
+`capacitor.config.json` 的 `webDir` 是 `www/`，只打包 `index.html`、`sw.js`、`manifest.webmanifest`、`icons/`；
+证书、`bridge.py`、日志不会被塞进 APK。
 
 ## 🖥️ 联调模式
 

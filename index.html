@@ -1151,8 +1151,24 @@
   /* 锁定模式：全屏 + 屏幕常亮，手势全部由 App 解释并发给电脑，
      三指/四指不再依赖系统手势开关，减少两边互相抢 */
   let wakeLock = null;
+
+  /* APK 原生壳：锁定期间屏蔽左右边缘手势（网页层做不到的部分） */
+  function nativeLock(on){
+    const C = window.Capacitor;
+    const plugin = C && C.Plugins && C.Plugins.GestureGuard;
+    if (plugin && typeof plugin.setLock === 'function'){
+      try{ Promise.resolve(plugin.setLock({ on: !!on })).catch(() => {}); return; }catch(e){}
+    }
+    const g = window.NativeGestureGuard;
+    if (g && typeof g.setLock === 'function'){
+      try{ g.setLock(!!on); }catch(e){}
+    }
+  }
+  nativeLock(padLock);
+
   async function applyPadLock(){
     localStorage.setItem('kb.padLock', padLock ? '1' : '0');
+    nativeLock(padLock);
     padSurface.classList.toggle('locked', padLock);
     syncPadChips();
     if (padLock){

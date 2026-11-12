@@ -1,0 +1,26 @@
+{
+  "name": "bluetooth-keyboard",
+  "version": "1.0.0",
+  "description": "让平板（小米平板 7 Pro / 任何 Android / iPad）变成电脑的蓝牙键盘。",
+  "main": "index.html",
+  "scripts": {
+    "sync": "node scripts/sync-www.js && cap sync android",
+    "apk": "npm run sync && cd android && gradlew.bat assembleDebug"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aurelius-zenon/bluetooth-keyboard.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Aurelius-zenon/bluetooth-keyboard/issues"
+  },
+  "homepage": "https://github.com/Aurelius-zenon/bluetooth-keyboard#readme",
+  "dependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/cli": "^6.2.3",
+    "@capacitor/core": "^6.2.3"
+  }
+}

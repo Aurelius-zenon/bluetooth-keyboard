@@ -15,9 +15,14 @@ venv/
 
 # Node / Capacitor
 node_modules/
-android/
 ios/
+www/
 package-lock.json
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
 
 # Bubblewrap 生成物
 android-twa/app/
