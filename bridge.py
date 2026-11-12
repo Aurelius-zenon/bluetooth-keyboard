@@ -50,16 +50,32 @@ class KeyBdInput(ctypes.Structure):
         ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
     ]
 
+class MouseInput(ctypes.Structure):
+    """必须声明！x64 下 MOUSEINPUT 是 32 字节，决定了 sizeof(INPUT)=40"""
+    _fields_ = [
+        ("dx",          wintypes.LONG),
+        ("dy",          wintypes.LONG),
+        ("mouseData",   wintypes.DWORD),
+        ("dwFlags",     wintypes.DWORD),
+        ("time",        wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
+    ]
+
+class HardwareInput(ctypes.Structure):
+    _fields_ = [
+        ("uMsg",    wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
 class InputUnion(ctypes.Union):
-    _fields_ = [("ki", KeyBdInput)]
+    _fields_ = [("ki", KeyBdInput), ("mi", MouseInput), ("hi", HardwareInput)]
 
 class INPUT(ctypes.Structure):
-    class _INPUT(ctypes.Union):
-        _fields_ = [("ki", KeyBdInput)]
-    _anonymous_ = ("union",)
+    _anonymous_ = ("u",)
     _fields_ = [
-        ("type",   wintypes.DWORD),
-        ("union",  _INPUT),
+        ("type", wintypes.DWORD),
+        ("u",    InputUnion),
     ]
 
 # ---------------------------------------------------------------------------
@@ -99,9 +115,9 @@ VK_CODE: dict[str, int] = {
 for _i in range(10):
     VK_CODE[str(_i)] = 0x30 + _i
 
-# 字母 a-z
+# 字母 a-z —— 注意：VK 码是大写 0x41-0x5A，小写 0x61-0x69 是 VK_NUMPAD1..9
 for _c in range(ord('a'), ord('z') + 1):
-    VK_CODE[chr(_c)] = _c  # a=0x61, b=0x62 ... z=0x7A
+    VK_CODE[chr(_c)] = ord(chr(_c).upper())  # a=0x41, b=0x42 ... z=0x5A
 
 # 符号键（US layout virtual key codes）
 VK_CODE.update({
@@ -148,6 +164,14 @@ _user32.GetForegroundWindow.restype = wintypes.HWND
 _user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
 _user32.GetWindowTextLengthW.restype = ctypes.c_int
 _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+_user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+_user32.AttachThreadInput.restype = wintypes.BOOL
+_user32.BringWindowToTop.argtypes = [wintypes.HWND]
+_user32.SetFocus.argtypes = [wintypes.HWND]
+_kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+_kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 # 运行统计（供 /diag 查询，用于定位"按键到底发给谁了"）
 _stats = {
@@ -169,6 +193,7 @@ def send_vk(vk_code: int, is_up: bool = False) -> bool:
     inp.ki.dwExtraInfo = None
     sent = _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
     if sent != 1:
+        _stats['failed'] += 1
         _stats['last_err'] = ctypes.get_last_error()
         return False
     return True
@@ -247,22 +272,62 @@ def _alt_unlock():
 
 
 def focus_target() -> bool:
-    """把锁定的目标窗口切到前台"""
+    """把锁定的目标窗口切到前台。
+
+    Windows 禁止后台进程直接 SetForegroundWindow，
+    需要先 AttachThreadInput 到目标线程再调用，才能稳定生效。
+    """
     global _target_hwnd
     if not _target_hwnd:
         return False
+    hwnd = _target_hwnd
     try:
-        if not _user32.IsWindow(_target_hwnd):
+        if not _user32.IsWindow(hwnd):
             _target_hwnd = 0
             return False
-        if _user32.GetForegroundWindow() == _target_hwnd:
+        if _user32.GetForegroundWindow() == hwnd:
             return True
-        if _user32.IsIconic(_target_hwnd):
-            _user32.ShowWindow(_target_hwnd, 9)   # SW_RESTORE
-        else:
-            _user32.ShowWindow(_target_hwnd, 5)   # SW_SHOW
+
+        for _ in range(3):
+            if _user32.IsIconic(hwnd):
+                _user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+            else:
+                _user32.ShowWindow(hwnd, 5)   # SW_SHOW
+            _user32.BringWindowToTop(hwnd)
+
+            fg = _user32.GetForegroundWindow()
+            cur_tid = _kernel32.GetCurrentThreadId()
+            fg_tid = _user32.GetWindowThreadProcessId(fg, None) if fg else 0
+            tgt_tid = _user32.GetWindowThreadProcessId(hwnd, None)
+
+            attached = []
+            for tid in {fg_tid, tgt_tid}:
+                if tid and tid != cur_tid:
+                    if _user32.AttachThreadInput(cur_tid, tid, True):
+                        attached.append(tid)
+            try:
+                _user32.SetForegroundWindow(hwnd)
+                _user32.SetFocus(hwnd)
+            finally:
+                for tid in attached:
+                    _user32.AttachThreadInput(cur_tid, tid, False)
+
+            if _user32.GetForegroundWindow() == hwnd:
+                return True
+            time.sleep(0.02)
+
+        # 最后手段：SwitchToThisWindow（对后台进程抢前台更宽容）
+        try:
+            _user32.SwitchToThisWindow(hwnd, True)
+        except Exception:
+            pass
+        if _user32.GetForegroundWindow() == hwnd:
+            return True
+
+        # 再兜底：Alt 解锁后重试
         _alt_unlock()
-        return bool(_user32.SetForegroundWindow(_target_hwnd))
+        _user32.SetForegroundWindow(hwnd)
+        return _user32.GetForegroundWindow() == hwnd
     except Exception:
         return False
 
