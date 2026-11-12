@@ -99,6 +99,7 @@
     font-size:var(--fs-letter);font-weight:600;line-height:1;
     transition:transform .05s ease, background .12s ease;
     overflow:hidden;
+    touch-action:none;-webkit-touch-callout:none;
   }
   .key.fn{
     background:var(--keyFn);color:var(--textFn);
@@ -111,17 +112,17 @@
   }
   .key.pressed{transform:translateY(1.5px) scale(.995);filter:brightness(.95);}
   .key.locked{
-    border-color:var(--accent);color:var(--accent);
-    box-shadow:0 0 0 2px var(--accentSoft) inset, inset 0 -3px 0 var(--accent);
-    background:var(--accentSoft);
+    border-color:#E5484D;color:#E5484D;
+    box-shadow:0 0 0 2px rgba(229,72,77,.18) inset, inset 0 -3px 0 #E5484D;
+    background:rgba(229,72,77,.10);
   }
   .key.locked::after{
     content:'';position:absolute;top:6px;right:6px;
-    width:6px;height:6px;border-radius:50%;background:var(--accent);
+    width:6px;height:6px;border-radius:50%;background:#E5484D;
   }
   #held{display:flex;gap:4px;align-items:center;flex:0 0 auto;}
   #held span{
-    font-size:11px;font-weight:600;color:var(--accent);background:var(--accentSoft);
+    font-size:11px;font-weight:600;color:#E5484D;background:rgba(229,72,77,.14);
     border-radius:10px;padding:3px 8px;line-height:1.2;
   }
   .key .sub{
@@ -260,13 +261,14 @@
     <div class="pad-hint">
       <b>单指</b> 移动光标 · 轻点 = 左键 · <b>双指点按</b> = 右键<br>
       <b>双指</b> 上下滚动 · 左右横移 · 捏合缩放<br>
-      <b>三指</b> 上划任务视图 · 下划显示桌面 · 左右切换窗口<br>
-      <b>四指</b> 左右切换虚拟桌面 · 上下划任务视图
+      <b>三指</b> 左右切换虚拟桌面<br>
+      <b>四指</b> 上划任务视图 · 下划显示桌面 · 左右切换窗口
     </div>
   </div>
   <div class="pad-foot">
     <span class="chip" id="padSens">指针速度 1.6×</span>
     <span class="chip" id="padTap">轻点单击：开</span>
+    <span class="chip" id="padThree">三指上下：关</span>
   </div>
 </section>
 
@@ -464,7 +466,8 @@
 
   /* ================= 长按锁定 ================= */
   const HOLD_MS = 380;
-  let modTimer = 0, modTarget = '', modEl = null;
+  let modTimer = 0, modTarget = '', modEl = null, pressT0 = 0;
+  let lastTapName = '', lastTapT = 0;
 
   function setLocked(name, on){
     st.locked[name] = on;
@@ -577,6 +580,7 @@
       clearTimeout(modTimer);
       modTarget = toggle;
       modEl = el;
+      pressT0 = performance.now();
       modTimer = setTimeout(() => {
         modTimer = 0;
         const name = modTarget;
@@ -610,11 +614,30 @@
   function endKeyPress(){
     stopRepeat();
     if (!modTimer) return;
+    const heldMs = performance.now() - pressT0;
+
+    // 安卓长按会发 pointercancel → 取消点击。已在键上按够 380ms → 视为锁定
+    if (heldMs >= HOLD_MS && modTarget){
+      clearTimeout(modTimer);
+      modTimer = 0;
+      const name = modTarget;
+      modTarget = ''; modEl = null;
+      setLocked(name, true);
+      return;
+    }
     clearTimeout(modTimer);
     modTimer = 0;
     const name = modTarget;
     modTarget = ''; modEl = null;
     if (name){
+      const now = performance.now();
+      // 双击也可锁定（长按被系统打断时的兜底）
+      if (lastTapName === name && now - lastTapT < 320){
+        lastTapName = ''; lastTapT = 0;
+        setLocked(name, true);
+        return;
+      }
+      lastTapName = name; lastTapT = now;
       st.mods[name] = !st.mods[name];
       paintState();
       haptic();
@@ -982,13 +1005,16 @@
   const padSurface = $('#padSurface');
   const padBadge = $('#padBadge');
   const padFingers = $('#padFingers');
+  padSurface.addEventListener('contextmenu', e => e.preventDefault());
 
   let sens = Number(localStorage.getItem('kb.sens') || 1.6);
   let tapClick = localStorage.getItem('kb.tapClick') !== '0';
+  let sysThree = localStorage.getItem('kb.sysThree') === '1';
 
   function syncPadChips(){
     $('#padSens').textContent = '指针速度 ' + sens.toFixed(1) + '×';
     $('#padTap').textContent = '轻点单击：' + (tapClick ? '开' : '关');
+    $('#padThree').textContent = '三指上下：' + (sysThree ? '开' : '关');
   }
   syncPadChips();
 
@@ -1003,6 +1029,12 @@
     tapClick = !tapClick;
     localStorage.setItem('kb.tapClick', tapClick ? '1' : '0');
     syncPadChips();
+  });
+  $('#padThree').addEventListener('click', () => {
+    sysThree = !sysThree;
+    localStorage.setItem('kb.sysThree', sysThree ? '1' : '0');
+    syncPadChips();
+    toast(sysThree ? '三指上下已开启，可能同时触发系统截屏' : '三指上下已关闭');
   });
 
   function padSend(obj){
@@ -1041,7 +1073,8 @@
 
   const pts = new Map();
   let startT = 0, startC = null, lastC = null, maxF = 0, moved = 0,
-      lastDist = 0, scrolled = false, zoomAcc = 0, pinchMode = false;
+      lastDist = 0, scrolled = false, zoomAcc = 0;
+  let twoMode = '', twoAccScroll = 0, twoAccPinch = 0;
 
   function centroid(){
     let x = 0, y = 0;
@@ -1070,7 +1103,12 @@
       startT = performance.now();
       startC = centroid();
       lastC = startC;
-      maxF = 1; moved = 0; scrolled = false; zoomAcc = 0; pinchMode = false; lastDist = 0;
+      maxF = 1; moved = 0; scrolled = false; zoomAcc = 0; twoMode = '';
+    }
+    if (pts.size === 2){
+      twoMode = ''; twoAccScroll = 0; twoAccPinch = 0;
+      lastDist = spread();
+      lastC = centroid();
     }
     maxF = Math.max(maxF, pts.size);
     drawFingers(pts.size);
@@ -1096,16 +1134,26 @@
     if (n === 2){
       const d = spread();
       const cd = Math.hypot(c.x - lastC.x, c.y - lastC.y);
-      if (!pinchMode && lastDist && Math.abs(d - lastDist) > cd * 1.4){
-        pinchMode = true;
+      const dd = d - lastDist;
+
+      /* 先判定模式，再执行，判完锁定到抬手：
+         质心位移占优 = 滚动；间距变化占优 = 缩放。
+         阈值 1.8 倍 + 起始累积 6px，避免双指滚动时的抖动被误判成缩放 */
+      if (!twoMode){
+        twoAccScroll += cd;
+        twoAccPinch += Math.abs(dd);
+        if (twoAccScroll + twoAccPinch >= 6){
+          twoMode = twoAccPinch > twoAccScroll * 1.8 ? 'pinch' : 'scroll';
+        }
       }
-      if (pinchMode){
-        zoomAcc += (d - lastDist);
-        if (Math.abs(zoomAcc) > 12){
+
+      if (twoMode === 'pinch'){
+        zoomAcc += dd;
+        if (Math.abs(zoomAcc) > 10){
           padSend({type:'zoom', dy: zoomAcc > 0 ? 120 : -120});
           zoomAcc = 0;
         }
-      } else {
+      } else if (twoMode === 'scroll'){
         const dx = (c.x - lastC.x) * sens * 0.55;
         const dy = (c.y - lastC.y) * sens * 0.55;
         if (Math.abs(dx) + Math.abs(dy) > 0.5){
@@ -1137,12 +1185,20 @@
     const dy = endC.y - startC.y;
 
     if (maxF >= 3){
-      const TH = 55;
+      const TH = 70;
+      const vertical = Math.abs(dy) >= Math.abs(dx);
       let name = '';
-      if (Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) > TH){
+
+      if (maxF >= 4){
+        // 四指：安卓/MIUI 没有默认四指手势，不会和系统抢
+        if (vertical && Math.abs(dy) > TH) name = dy < 0 ? 'taskview' : 'desktop';
+        else if (!vertical && Math.abs(dx) > TH) name = 'switch';
+      } else if (!vertical && Math.abs(dx) > TH){
+        // 三指左右：系统未占用
+        name = dx < 0 ? 'vleft' : 'vright';
+      } else if (vertical && sysThree && Math.abs(dy) > TH){
+        // 三指上下：默认关闭（MIUI 会同时截屏/分屏），需手动开启
         name = dy < 0 ? 'taskview' : 'desktop';
-      } else if (Math.abs(dx) > TH){
-        name = maxF >= 4 ? (dx < 0 ? 'vleft' : 'vright') : 'switch';
       }
       if (name){
         padSend({type:'gesture', name});
