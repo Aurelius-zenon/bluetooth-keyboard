@@ -4,7 +4,9 @@
     "target": {
       "namespace": "android_app",
       "package_name": "com.bluetoothkeyboard.app",
-      "sha256_cert_fingerprints": ["A1:87:AA:2E:EF:F3:A8:A4:40:FF:06:71:C5:FD:08:CC:39:D6:3B:54:D4:70:B2:CC:F2:C9:CC:AE:AA:D7:17:79"]
+      "sha256_cert_fingerprints": [
+        "94:F2:6C:B4:8D:EA:32:69:42:51:70:1A:BA:56:DE:88:9B:71:A2:8F:D0:95:87:15:74:F0:96:5D:D6:16:AA:09"
+      ]
     }
   }
 ]
