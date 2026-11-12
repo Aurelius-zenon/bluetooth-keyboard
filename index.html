@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, orientation=landscape">
+<meta name="theme-color" content="#2B8FFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#3D8BFF" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="screen-orientation" content="landscape">
+<meta name="x5-screen-orientation" content="landscape">
+<link rel="manifest" href="./manifest.webmanifest">
+<title>触屏键盘 · 平板蓝牙输入</title>
+<style>
+/* ========== CSS 变量 + 皮肤系统 ========== */
+:root {
+  /* 默认亮色 */
+  --bg: #F7F8FA;
+  --bg-key: #FFFFFF;
+  --bg-key-active: #E0E3EA;
+  --bg-special: #E4E6EB;
+  --bg-special-active: #2B8FFF;
+  --bg-indicator: #FFFFFF;
+  --bg-indicator-active: #2B8FFF;
+  --border: #D0D4DD;
+  --text: #1F2937;
+  --text-sub: #6B7280;
+  --text-inverse: #FFFFFF;
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --gap: 6px;
+  --key-h: 52px;
+  --key-h-sm: 44px;
+  --shadow-key: 0 1px 0 rgba(0,0,0,0.06);
+  --shadow-panel: 0 4px 24px rgba(0,0,0,0.08);
+  --accent: #2B8FFF;
+  --transition: 150ms ease;
+}
+
+/* 深色主题 */
+body[data-theme="dark"] {
+  --bg: #1C1F24;
+  --bg-key: #2A2E36;
+  --bg-key-active: #3A3F4A;
+  --bg-special: #353A44;
+  --bg-special-active: #3D8BFF;
+  --bg-indicator: #353A44;
+  --bg-indicator-active: #3D8BFF;
+  --border: #444A56;
+  --text: #E8EAF0;
+  --text-sub: #9AA0AC;
+  --accent: #3D8BFF;
+  --shadow-key: 0 1px 0 rgba(0,0,0,0.3);
+  --shadow-panel: 0 4px 24px rgba(0,0,0,0.4);
+}
+
+/* 米色主题 */
+body[data-theme="beige"] {
+  --bg: #F5F1E8;
+  --bg-key: #EFE9DC;
+  --bg-key-active: #E3DCC9;
+  --bg-special: #E7DFCB;
+  --bg-special-active: #A37B5C;
+  --bg-indicator: #EFE9DC;
+  --bg-indicator-active: #A37B5C;
+  --border: #D5CCB5;
+  --text: #3B2F24;
+  --text-sub: #7A6B5A;
+  --accent: #A37B5C;
+  --shadow-key: 0 1px 0 rgba(90,70,40,0.1);
+  --shadow-panel: 0 4px 24px rgba(90,70,40,0.12);
+}
+
+/* ========== 全局重置 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overscroll-behavior: none; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* ========== 状态栏 ========== */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.status-left { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+}
+.status-dot.scanning {
+  background: var(--warning);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+.status-dot.connected {
+  background: var(--success);
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.status-text { color: var(--text-sub); }
+.status-text.connected { color: var(--success); }
+.status-text.scanning { color: var(--warning); }
+.btn-icon {
+  width: 36px; height: 36px; border-radius: 8px;
+  border: none; background: transparent; color: var(--text-sub);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background var(--transition), color var(--transition);
+}
+.btn-icon:hover { background: var(--bg-special); color: var(--text); }
+.btn-icon svg { width: 20px; height: 20px; }
+
+/* ========== 组合键指示器 ========== */
+.mod-indicator {
+  display: flex; gap: 6px; padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mod-pill {
+  padding: 5px 14px;
+  border-radius: 20px;
+  background: var(--bg-indicator);
+  border: 1px solid var(--border);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-sub);
+  opacity: 0.5;
+  transition: all var(--transition);
+  user-select: none;
+}
+.mod-pill.active {
+  background: var(--bg-indicator-active);
+  border-color: var(--bg-indicator-active);
+  color: var(--text-inverse);
+  opacity: 1;
+}
+
+/* ========== 工具栏 ========== */
+.toolbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.layout-switch {
+  display: flex; background: var(--bg-special);
+  border-radius: 8px; padding: 3px; gap: 2px; flex-shrink: 0;
+}
+.layout-switch button {
+  padding: 6px 14px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-sub);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all var(--transition);
+}
+.layout-switch button.active {
+  background: var(--bg-key);
+  color: var(--text);
+  box-shadow: var(--shadow-key);
+}
+.btn-theme {
+  padding: 6px 14px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-key);
+  color: var(--text); font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  transition: all var(--transition);
+}
+.btn-theme:hover { border-color: var(--accent); color: var(--accent); }
+.log-area {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--text-sub);
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+  padding: 6px 12px; background: var(--bg-special); border-radius: 6px;
+}
+.log-area .key-log { color: var(--text); }
+.log-area .combo { color: var(--accent); font-weight: 600; }
+
+/* ========== 键盘容器 ========== */
+.keyboard-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0));
+  display: flex; justify-content: center; align-items: flex-end;
+}
+.keyboard-set {
+  display: flex; gap: var(--gap);
+  width: 100%;
+  max-width: 1200px;
+}
+.keyboard-main { flex: 1; min-width: 0; }
+.keyboard-numpad {
+  width: 220px; flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap);
+  align-content: end;
+}
+.keyboard-numpad.hidden { display: none; }
+
+/* ========== 键盘行 ========== */
+.row {
+  display: grid;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+.row.function { grid-template-columns: repeat(15, 1fr); }
+.row.num { grid-template-columns: 3fr repeat(13, 1fr) 2fr; }
+.row.qwerty { grid-template-columns: 4fr repeat(11, 1fr) 4fr; }
+.row.asdf { grid-template-columns: 5fr repeat(11, 1fr) 5fr; }
+.row.zxcv { grid-template-columns: 6fr repeat(10, 1fr) 7fr; }
+.row.bottom { grid-template-columns: 1fr 1fr 1fr 6.25fr 1fr 1fr 1fr; }
+
+/* ========== 按键 ========== */
+.key {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: var(--key-h);
+  background: var(--bg-key);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-key);
+  color: var(--text);
+  font-size: 16px; font-weight: 500;
+  cursor: pointer; user-select: none;
+  transition: transform 80ms ease, background var(--transition), box-shadow var(--transition);
+  position: relative;
+}
+.key:active, .key.down {
+  transform: translateY(1px);
+  background: var(--bg-key-active);
+  box-shadow: none;
+}
+.key.special {
+  background: var(--bg-special);
+  font-size: 12px;
+  color: var(--text-sub);
+  font-weight: 500;
+}
+.key.modifier {
+  background: var(--bg-special);
+  font-size: 12px;
+  color: var(--text-sub);
+}
+.key.modifier.active {
+  background: var(--bg-special-active);
+  color: var(--text-inverse);
+  border-color: var(--bg-special-active);
+}
+.key .label-top { font-size: 11px; color: var(--text-sub); line-height: 1.2; }
+.key .label-main { font-size: 16px; line-height: 1; }
+.key .label-sub { font-size: 10px; color: var(--text-sub); margin-top: 2px; }
+.key.wide-num { grid-column: span 2; }
+.key.numpad-tall { grid-row: span 2; }
+
+/* F 行按键字体更小 */
+.row.function .key { font-size: 11px; height: var(--key-h-sm); }
+.row.function .label-main { font-size: 11px; }
+
+/* 符号键两行标签 */
+.key.two-line { font-size: 14px; }
+
+/* ========== Toast ========== */
+.toast-container {
+  position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+  z-index: 100; display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 10px 20px; background: var(--text); color: var(--bg);
+  border-radius: 10px; font-size: 14px; font-weight: 500;
+  box-shadow: var(--shadow-panel);
+  animation: toast-in 200ms ease, toast-out 200ms ease 1300ms forwards;
+}
+.toast.success { background: var(--success); color: #fff; }
+.toast.accent { background: var(--accent); color: #fff; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translateY(-6px); }
+}
+
+/* ========== 抽屉 ========== */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  opacity: 0; visibility: hidden;
+  transition: opacity var(--transition), visibility var(--transition);
+  z-index: 50;
+}
+.overlay.show { opacity: 1; visibility: visible; }
+
+.drawer {
+  position: fixed;
+  background: var(--bg);
+  box-shadow: var(--shadow-panel);
+  z-index: 60;
+  transition: transform var(--transition);
+}
+.drawer.right {
+  top: 0; right: 0; width: 320px; height: 100%;
+  transform: translateX(100%);
+  border-left: 1px solid var(--border);
+}
+.drawer.right.show { transform: translateX(0); }
+.drawer.bottom {
+  left: 0; right: 0; bottom: 0;
+  border-radius: 16px 16px 0 0;
+  transform: translateY(100%);
+  border-top: 1px solid var(--border);
+}
+.drawer.bottom.show { transform: translateY(0); }
+
+.drawer-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 16px; font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.drawer-close {
+  width: 32px; height: 32px; border-radius: 8px;
+  border: none; background: var(--bg-special);
+  color: var(--text-sub); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.drawer-close:hover { background: var(--border); color: var(--text); }
+
+.drawer-body { padding: 16px 20px; }
+
+/* 设置抽屉 */
+.section-title {
+  font-size: 12px; font-weight: 600; color: var(--text-sub);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+.paired-device {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; background: var(--bg-key);
+  border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 8px;
+}
+.paired-device-info { display: flex; align-items: center; gap: 10px; }
+.device-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--bg-special);
+  display: flex; align-items: center; justify-content: center;
+}
+.device-name { font-size: 14px; font-weight: 500; }
+.device-status { font-size: 12px; color: var(--success); }
+.btn-secondary {
+  padding: 8px 16px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-key);
+  color: var(--text); font-size: 13px; cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.setting-label { font-size: 14px; }
+.toggle {
+  width: 44px; height: 26px; border-radius: 13px;
+  background: var(--bg-special); border: none;
+  position: relative; cursor: pointer;
+  transition: background var(--transition);
+}
+.toggle.on { background: var(--success); }
+.toggle::after {
+  content: ""; position: absolute;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; top: 2px; left: 2px;
+  transition: transform var(--transition);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle.on::after { transform: translateX(18px); }
+
+/* 桥接徽章 */
+.bridge-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 12px;
+  background: rgba(34,197,94,0.12);
+  color: var(--success);
+  margin-left: 6px;
+}
+.bridge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+  animation: breathe 1.5s ease-in-out infinite;
+}
+
+/* 桥接配置 */
+.bridge-input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-key);
+  color: var(--text);
+  font-size: 14px;
+  font-family: "SF Mono", Consolas, monospace;
+  outline: none;
+  width: 100%;
+  transition: border-color var(--transition);
+}
+.bridge-input:focus { border-color: var(--accent); }
+.bridge-status {
+  margin-top: 10px; padding: 10px 12px;
+  border-radius: 8px; font-size: 12px;
+  text-align: center;
+}
+.bridge-status.ok { background: rgba(34,197,94,0.1); color: var(--success); }
+.bridge-status.err { background: rgba(239,68,68,0.1); color: var(--danger); }
+
+/* 皮肤抽屉 */
+.skin-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px; padding: 4px;
+}
+.skin-item {
+  border-radius: 12px; overflow: hidden;
+  cursor: pointer; border: 2px solid transparent;
+  transition: border-color var(--transition);
+}
+.skin-item.active { border-color: var(--accent); }
+.skin-preview {
+  height: 80px; display: flex;
+}
+.skin-preview .preview-key {
+  flex: 1; margin: 2px; border-radius: 6px;
+  border: 1px solid rgba(0,0,0,0.1);
+}
+.skin-name {
+  padding: 8px; text-align: center;
+  font-size: 13px; font-weight: 500;
+  background: var(--bg-key); border-top: 1px solid var(--border);
+}
+.skin-item.active .skin-name { color: var(--accent); font-weight: 600; }
+
+/* ========== 横屏锁定 + 沉浸式全屏 ========== */
+@media (orientation: portrait) {
+  body::before {
+    content: "🔄 请横屏使用";
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 22px; font-weight: 600; color: var(--text-sub);
+    z-index: 9999; pointer-events: none;
+    animation: breathe 2s ease-in-out infinite;
+    background: var(--bg); padding: 16px 32px; border-radius: 12px;
+    box-shadow: var(--shadow-panel);
+  }
+  main.keyboard-wrap { opacity: 0.15; }
+}
+
+/* safe-area 沉浸式 */
+body { padding-top: env(safe-area-inset-top, 0); }
+.status-bar { padding-top: calc(10px + env(safe-area-inset-top, 0)); }
+
+/* ========== 响应式 ========== */
+@media (max-width: 1024px) {
+  .keyboard-numpad { width: 200px; }
+  .key { height: 48px; }
+}
+@media (max-width: 768px) {
+  .keyboard-numpad { display: none !important; }
+  .keyboard-wrap { padding: 8px 10px; }
+  .key { height: 46px; font-size: 15px; }
+  .row.function .key { height: 40px; font-size: 10px; }
+  .status-bar { padding: 8px 12px; }
+  .toolbar { padding: 8px 12px; flex-wrap: wrap; }
+  .log-area { flex-basis: 100%; order: 3; margin-top: 6px; }
+  .drawer.right { width: 100%; max-width: 320px; }
+  .mod-indicator { padding: 6px 12px; }
+  .mod-pill { padding: 4px 10px; font-size: 11px; }
+}
+@media (max-width: 480px) {
+  .key { height: 44px; font-size: 14px; }
+  .row.function { display: none; } /* F 行在小屏隐藏 */
+}
+
+</style>
+</head>
+<body data-theme="light">
+
+<!-- ========== 状态栏 ========== -->
+<header class="status-bar">
+  <div class="status-left">
+    <div id="statusDot" class="status-dot connected"></div>
+    <span id="statusText" class="status-text connected">已连接 · DESKTOP-USER</span>
+    <span id="bridgeBadge" class="bridge-badge" style="display:none;" title="联调桥接">
+      <span class="bridge-dot"></span>桥接
+    </span>
+  </div>
+  <button id="btnSettings" class="btn-icon" aria-label="设置">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+</header>
+
+<!-- ========== 组合键指示器 ========== -->
+<div class="mod-indicator">
+  <div class="mod-pill" data-mod="ctrl">Ctrl</div>
+  <div class="mod-pill" data-mod="alt">Alt</div>
+  <div class="mod-pill" data-mod="shift">Shift</div>
+  <div class="mod-pill" data-mod="win">Win</div>
+</div>
+
+<!-- ========== 工具栏 ========== -->
+<div class="toolbar">
+  <div class="layout-switch">
+    <button id="btnLayoutCompact" class="active">精简键盘</button>
+    <button id="btnLayoutFull">完整键盘</button>
+  </div>
+  <button id="btnTheme" class="btn-theme">🎨 主题</button>
+  <div id="logArea" class="log-area">准备就绪 · 键盘已激活</div>
+</div>
+
+<!-- ========== 键盘区 ========== -->
+<main class="keyboard-wrap">
+  <div class="keyboard-set" id="keyboardSet">
+    <!-- 主键盘 -->
+    <div class="keyboard-main">
+      <!-- F 功能行 -->
+      <div class="row function">
+        <div class="key special" data-key="esc" data-display="Esc">Esc</div>
+        <div class="key special" data-key="f1" data-display="F1">F1</div>
+        <div class="key special" data-key="f2" data-display="F2">F2</div>
+        <div class="key special" data-key="f3" data-display="F3">F3</div>
+        <div class="key special" data-key="f4" data-display="F4">F4</div>
+        <div class="key special" data-key="f5" data-display="F5">F5</div>
+        <div class="key special" data-key="f6" data-display="F6">F6</div>
+        <div class="key special" data-key="f7" data-display="F7">F7</div>
+        <div class="key special" data-key="f8" data-display="F8">F8</div>
+        <div class="key special" data-key="f9" data-display="F9">F9</div>
+        <div class="key special" data-key="f10" data-display="F10">F10</div>
+        <div class="key special" data-key="f11" data-display="F11">F11</div>
+        <div class="key special" data-key="f12" data-display="F12">F12</div>
+      </div>
+      <!-- 数字行 -->
+      <div class="row num">
+        <div class="key two-line" data-key="`" data-shift="~" data-display="` ~"><span class="label-top">~</span><span class="label-main">`</span></div>
+        <div class="key two-line" data-key="1" data-shift="!" data-display="1 !"><span class="label-top">!</span><span class="label-main">1</span></div>
+        <div class="key two-line" data-key="2" data-shift="@" data-display="2 @"><span class="label-top">@</span><span class="label-main">2</span></div>
+        <div class="key two-line" data-key="3" data-shift="#" data-display="3 #"><span class="label-top">#</span><span class="label-main">3</span></div>
+        <div class="key two-line" data-key="4" data-shift="$" data-display="4 $"><span class="label-top">$</span><span class="label-main">4</span></div>
+        <div class="key two-line" data-key="5" data-shift="%" data-display="5 %"><span class="label-top">%</span><span class="label-main">5</span></div>
+        <div class="key two-line" data-key="6" data-shift="^" data-display="6 ^"><span class="label-top">^</span><span class="label-main">6</span></div>
+        <div class="key two-line" data-key="7" data-shift="&" data-display="7 &"><span class="label-top">&amp;</span><span class="label-main">7</span></div>
+        <div class="key two-line" data-key="8" data-shift="*" data-display="8 *"><span class="label-top">*</span><span class="label-main">8</span></div>
+        <div class="key two-line" data-key="9" data-shift="(" data-display="9 ("><span class="label-top">(</span><span class="label-main">9</span></div>
+        <div class="key two-line" data-key="0" data-shift=")" data-display="0 )"><span class="label-top">)</span><span class="label-main">0</span></div>
+        <div class="key two-line" data-key="-" data-shift="_" data-display="- _"><span class="label-top">_</span><span class="label-main">-</span></div>
+        <div class="key two-line" data-key="=" data-shift="+" data-display="= +"><span class="label-top">+</span><span class="label-main">=</span></div>
+        <div class="key special" data-key="backspace" data-display="Backspace">⌫ Backspace</div>
+      </div>
+      <!-- QWERTY 行 -->
+      <div class="row qwerty">
+        <div class="key special" data-key="tab" data-display="Tab">⇥ Tab</div>
+        <div class="key" data-key="q" data-display="Q">Q</div>
+        <div class="key" data-key="w" data-display="W">W</div>
+        <div class="key" data-key="e" data-display="E">E</div>
+        <div class="key" data-key="r" data-display="R">R</div>
+        <div class="key" data-key="t" data-display="T">T</div>
+        <div class="key" data-key="y" data-display="Y">Y</div>
+        <div class="key" data-key="u" data-display="U">U</div>
+        <div class="key" data-key="i" data-display="I">I</div>
+        <div class="key" data-key="o" data-display="O">O</div>
+        <div class="key" data-key="p" data-display="P">P</div>
+        <div class="key two-line" data-key="[" data-shift="{" data-display="[ {"><span class="label-top">{</span><span class="label-main">[</span></div>
+        <div class="key two-line" data-key="]" data-shift="}" data-display="] }"><span class="label-top">}</span><span class="label-main">]</span></div>
+        <div class="key two-line" data-key="\" data-shift="|" data-display="\ |"><span class="label-top">|</span><span class="label-main">\</span></div>
+      </div>
+      <!-- ASDF 行 -->
+      <div class="row asdf">
+        <div class="key special" data-key="caps" data-display="Caps Lock">⇪ Caps</div>
+        <div class="key" data-key="a" data-display="A">A</div>
+        <div class="key" data-key="s" data-display="S">S</div>
+        <div class="key" data-key="d" data-display="D">D</div>
+        <div class="key" data-key="f" data-display="F">F</div>
+        <div class="key" data-key="g" data-display="G">G</div>
+        <div class="key" data-key="h" data-display="H">H</div>
+        <div class="key" data-key="j" data-display="J">J</div>
+        <div class="key" data-key="k" data-display="K">K</div>
+        <div class="key" data-key="l" data-display="L">L</div>
+        <div class="key two-line" data-key=";" data-shift=":" data-display="; :"><span class="label-top">:</span><span class="label-main">;</span></div>
+        <div class="key two-line" data-key="'" data-shift="\"" data-display="' \"><span class="label-top">"</span><span class="label-main">'</span></div>
+        <div class="key special" data-key="enter" data-display="Enter">⏎ Enter</div>
+      </div>
+      <!-- ZXCV 行 -->
+      <div class="row zxcv">
+        <div class="key special modifier" data-modifier="shift" data-key="shift" data-display="Shift">⇧ Shift</div>
+        <div class="key" data-key="z" data-display="Z">Z</div>
+        <div class="key" data-key="x" data-display="X">X</div>
+        <div class="key" data-key="c" data-display="C">C</div>
+        <div class="key" data-key="v" data-display="V">V</div>
+        <div class="key" data-key="b" data-display="B">B</div>
+        <div class="key" data-key="n" data-display="N">N</div>
+        <div class="key" data-key="m" data-display="M">M</div>
+        <div class="key two-line" data-key="," data-shift="<" data-display=", <"><span class="label-top"><</span><span class="label-main">,</span></div>
+        <div class="key two-line" data-key="." data-shift=">" data-display=". >"><span class="label-top">></span><span class="label-main">.</span></div>
+        <div class="key two-line" data-key="/" data-shift="?" data-display="/ ?"><span class="label-top">?</span><span class="label-main">/</span></div>
+        <div class="key special modifier" data-modifier="shift" data-key="shift" data-display="Shift">⇧ Shift</div>
+      </div>
+      <!-- 底部行 -->
+      <div class="row bottom">
+        <div class="key special modifier" data-modifier="ctrl" data-key="ctrl" data-display="Ctrl">Ctrl</div>
+        <div class="key special modifier" data-modifier="alt" data-key="alt" data-display="Alt">Alt</div>
+        <div class="key special modifier" data-modifier="win" data-key="win" data-display="Win">⌘ Win</div>
+        <div class="key" data-key="space" data-display="Space">Space</div>
+        <div class="key special modifier" data-modifier="win" data-key="win" data-display="Win">⌘ Win</div>
+        <div class="key special modifier" data-modifier="alt" data-key="alt" data-display="Alt">Alt</div>
+        <div class="key special" data-key="fn" data-display="Fn">Fn</div>
+      </div>
+    </div>
+    <!-- 小键盘 -->
+    <div class="keyboard-numpad" id="numpad">
+      <div class="key special" data-key="numlock" data-display="Num">Num</div>
+      <div class="key special" data-key="numpad_div" data-display="/">/</div>
+      <div class="key special" data-key="numpad_mul" data-display="*">*</div>
+      <div class="key special numpad-tall" data-key="numpad_sub" data-display="-">-</div>
+      <div class="key" data-key="numpad_7" data-display="7">7</div>
+      <div class="key" data-key="numpad_8" data-display="8">8</div>
+      <div class="key" data-key="numpad_9" data-display="9">9</div>
+      <div class="key special numpad-tall wide-num" data-key="numpad_add" data-display="+">+</div>
+      <div class="key" data-key="numpad_4" data-display="4">4</div>
+      <div class="key" data-key="numpad_5" data-display="5">5</div>
+      <div class="key" data-key="numpad_6" data-display="6">6</div>
+      <div class="key" data-key="numpad_1" data-display="1">1</div>
+      <div class="key" data-key="numpad_2" data-display="2">2</div>
+      <div class="key" data-key="numpad_3" data-display="3">3</div>
+      <div class="key special numpad-tall" data-key="numpad_enter" data-display="Enter">⏎</div>
+      <div class="key wide-num" data-key="numpad_0" data-display="0">0</div>
+      <div class="key" data-key="numpad_dot" data-display=".">.</div>
+    </div>
+  </div>
+</main>
+
+<!-- ========== Toast 容器 ========== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ========== 遮罩 ========== -->
+<div class="overlay" id="overlay"></div>
+
+<!-- ========== 设置抽屉 ========== -->
+<aside class="drawer right" id="drawerSettings">
+  <div class="drawer-header">
+    设置
+    <button class="drawer-close" data-drawer="drawerSettings">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="section-title">蓝牙设备</div>
+    <div id="deviceList">
+      <div class="paired-device">
+        <div class="paired-device-info">
+          <div class="device-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </div>
+          <div>
+            <div class="device-name">DESKTOP-USER</div>
+            <div class="device-status" id="deviceStatus">● 已连接</div>
+          </div>
+        </div>
+        <div class="device-signal" style="font-size:12px;color:var(--text-sub);">信号强</div>
+      </div>
+    </div>
+    <button class="btn-secondary" style="width:100%;margin-top:8px;" id="btnRescan">🔄 重新扫描</button>
+
+    <div class="section-title" style="margin-top:24px;">通用</div>
+    <div class="setting-row">
+      <span class="setting-label">触觉反馈</span>
+      <button class="toggle on" data-toggle="haptic"></button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">按键音效</span>
+      <button class="toggle" data-toggle="sound"></button>
+    </div>
+
+    <div class="section-title" style="margin-top:24px;">联调桥接</div>
+    <div class="setting-row">
+      <span class="setting-label">启用联调模式</span>
+      <button class="toggle" id="toggleBridge" data-toggle="bridge"></button>
+    </div>
+    <div id="bridgeConfig" style="display:none;">
+      <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <span class="setting-label" style="font-size:12px;color:var(--text-sub);">电脑端桥接地址</span>
+        <input type="text" id="bridgeEndpoint" class="bridge-input" placeholder="http://192.168.1.100:8888" value="http://localhost:8888">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn-secondary" id="btnTestBridge" style="flex:1;">🔗 测试连接</button>
+        <button class="btn-secondary" id="btnSendHello" style="flex:1;">Aa 测试输入</button>
+      </div>
+      <div id="bridgeStatus" class="bridge-status" style="display:none;"></div>
+    </div>
+
+    <div class="section-title" style="margin-top:24px;">关于</div>
+    <div style="font-size:12px;color:var(--text-sub);line-height:1.6;">
+      触屏键盘 v1.0.0<br>
+      平板蓝牙 HID 键盘模拟器<br>
+      让你的平板变成随时可用的电脑键盘
+    </div>
+  </div>
+</aside>
+
+<!-- ========== 皮肤抽屉 ========== -->
+<aside class="drawer bottom" id="drawerTheme">
+  <div class="drawer-header">
+    选择主题
+    <button class="drawer-close" data-drawer="drawerTheme">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="skin-grid" id="skinGrid"></div>
+  </div>
+</aside>
+
+<script>
+/* ========== 组合键效果表 ========== */
+const COMBO_MAP = {
+  'ctrl+c':  { label: 'Ctrl+C',  desc: '复制' },
+  'ctrl+v':  { label: 'Ctrl+V',  desc: '粘贴' },
+  'ctrl+z':  { label: 'Ctrl+Z',  desc: '撤销' },
+  'ctrl+y':  { label: 'Ctrl+Y',  desc: '重做' },
+  'ctrl+a':  { label: 'Ctrl+A',  desc: '全选' },
+  'ctrl+f':  { label: 'Ctrl+F',  desc: '查找' },
+  'ctrl+t':  { label: 'Ctrl+T',  desc: '新建标签' },
+  'ctrl+w':  { label: 'Ctrl+W',  desc: '关闭' },
+  'ctrl+s':  { label: 'Ctrl+S',  desc: '保存' },
+  'ctrl+tab':{ label: 'Ctrl+Tab',desc: '切换标签' },
+  'alt+tab': { label: 'Alt+Tab', desc: '应用切换' },
+  'alt+f4':  { label: 'Alt+F4',  desc: '关闭窗口' },
+  'win+r':   { label: 'Win+R',   desc: '运行' },
+  'win+d':   { label: 'Win+D',   desc: '桌面' },
+  'win+e':   { label: 'Win+E',   desc: '资源管理器' },
+  'win+l':   { label: 'Win+L',   desc: '锁定' },
+  'win+tab': { label: 'Win+Tab', desc: '切换窗口' },
+  'win+up':  { label: 'Win+↑',   desc: '最大化' },
+  'win+down':{ label: 'Win+↓',   desc: '最小化' },
+  'win+left':{ label: 'Win+←',   desc: '左分屏' },
+  'win+right':{ label: 'Win+→',  desc: '右分屏' },
+};
+
+/* ========== 本地存储 ========== */
+const LS_KEY = 'btKeyboardSettings';
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY)) || {};
+  } catch { return {}; }
+}
+function saveSettings() {
+  const s = {
+    theme: document.body.dataset.theme,
+    layout: state.layout,
+    deviceName: state.deviceName,
+    bridge: state.bridge,
+    capsLock: state.capsLock,
+  };
+  localStorage.setItem(LS_KEY, JSON.stringify(s));
+}
+
+/* ========== 状态 ========== */
+const saved = loadSettings();
+const state = {
+  modifiers: new Set(),
+  capsLock: saved.capsLock || false,
+  bluetooth: 'connected',
+  deviceName: saved.deviceName || 'DESKTOP-USER',
+  layout: saved.layout || 'compact',
+  bridge: saved.bridge || { enabled: false, endpoint: 'http://localhost:8888' },
+};
+
+/* ========== 日志历史 ========== */
+const logHistory = [];
+const MAX_LOG = 10;
+
+function pushLog(text, type) {
+  logHistory.push({ text, type });
+  if (logHistory.length > MAX_LOG) logHistory.shift();
+  renderLog();
+}
+function renderLog() {
+  const logEl = document.getElementById('logArea');
+  logEl.innerHTML = logHistory.map(item =>
+    `<span class="${item.type === 'combo' ? 'combo' : 'key-log'}">${item.text}</span>`
+  ).join('');
+  if (logHistory.length === 0) logEl.textContent = '准备就绪 · 键盘已激活';
+}
+
+/* ========== 联调桥接：发送按键到电脑 ========== */
+let bridgeCooldown = false;
+async function sendToBridge(payload) {
+  if (!state.bridge.enabled) return;
+  if (bridgeCooldown) return;
+  bridgeCooldown = true;
+  setTimeout(() => bridgeCooldown = false, 30); // 30ms 节流
+  try {
+    await fetch(state.bridge.endpoint + '/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    // 桥接未连通时静默，状态栏徽章会在下一次状态检查时显示
+  }
+}
+
+/* ========== 按键处理核心 ========== */
+const keyboardWrap = document.querySelector('.keyboard-wrap');
+keyboardWrap.addEventListener('click', (e) => {
+  const keyEl = e.target.closest('.key');
+  if (!keyEl) return;
+  keyEl.classList.add('down');
+  setTimeout(() => keyEl.classList.remove('down'), 80);
+  handleKeyPress(keyEl);
+});
+
+function handleKeyPress(keyEl) {
+  const key = keyEl.dataset.key;
+  const modifier = keyEl.dataset.modifier;
+  const display = keyEl.dataset.display || key;
+
+  // 修饰键切换（不发桥接）
+  if (modifier) { toggleModifier(modifier, keyEl); return; }
+
+  // Esc
+  if (key === 'esc') {
+    clearAllModifiers();
+    pushLog('Esc', 'key');
+    sendToBridge({ key: 'esc', mods: [], combo: null });
+    return;
+  }
+
+  // Caps Lock
+  if (key === 'caps') {
+    state.capsLock = !state.capsLock;
+    keyEl.classList.toggle('active', state.capsLock);
+    pushLog('Caps Lock ' + (state.capsLock ? 'ON' : 'OFF'), 'key');
+    saveSettings();
+    return;
+  }
+
+  // 收集修饰键
+  const mods = [...state.modifiers].sort();
+  const modsLabel = mods.join('+');
+  const isCombo = mods.length > 0;
+
+  if (isCombo) {
+    const comboKey = modsLabel + '+' + key.toLowerCase();
+    const combo = COMBO_MAP[comboKey];
+    if (combo) {
+      pushLog('▶ ' + combo.label + ' ' + combo.desc, 'combo');
+      showToast(combo.label + ' · ' + combo.desc, 'accent');
+    } else {
+      pushLog('▶ ' + modsLabel + '+' + display, 'combo');
+      showToast(modsLabel + '+' + display + ' 已发送');
+    }
+    sendToBridge({
+      key: key.toLowerCase(),
+      mods,
+      combo: comboKey,
+      label: combo ? combo.label : modsLabel + '+' + display,
+    });
+    clearAllModifiersExceptShift();
+    return;
+  }
+
+  // 单键输出
+  let output = key;
+  let logText = display;
+  let realKey = key;
+
+  if (/^[a-z]$/.test(key)) {
+    const isUpper = state.capsLock !== state.modifiers.has('shift');
+    output = isUpper ? key.toUpperCase() : key;
+    logText = output;
+  } else if (keyEl.dataset.shift && state.modifiers.has('shift')) {
+    output = keyEl.dataset.shift;
+    logText = output;
+  } else if (['enter','backspace','tab','space'].includes(key)) {
+    realKey = key; logText = display;
+  } else if (/^f\d+$/.test(key)) {
+    realKey = key; logText = display;
+  } else if (key.startsWith('numpad_')) {
+    realKey = key.replace('numpad_', '');
+    logText = keyEl.textContent.trim();
+  }
+
+  pushLog(logText, 'key');
+  sendToBridge({ key: realKey, mods: [], combo: null, label: logText });
+}
+
+function toggleModifier(mod, keyEl) {
+  const pill = document.querySelector(`.mod-pill[data-mod="${mod}"]`);
+  if (state.modifiers.has(mod)) {
+    state.modifiers.delete(mod);
+    document.querySelectorAll(`.key.modifier[data-modifier="${mod}"]`).forEach(el => el.classList.remove('active'));
+    if (pill) pill.classList.remove('active');
+  } else {
+    state.modifiers.add(mod);
+    document.querySelectorAll(`.key.modifier[data-modifier="${mod}"]`).forEach(el => el.classList.add('active'));
+    if (pill) pill.classList.add('active');
+  }
+}
+function clearAllModifiers() {
+  state.modifiers.clear();
+  document.querySelectorAll('.key.modifier').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.mod-pill').forEach(el => el.classList.remove('active'));
+}
+function clearAllModifiersExceptShift() {
+  ['ctrl','alt','win'].forEach(m => state.modifiers.delete(m));
+  document.querySelectorAll('.key.modifier[data-modifier="ctrl"], .key.modifier[data-modifier="alt"], .key.modifier[data-modifier="win"]').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.mod-pill[data-mod="ctrl"], .mod-pill[data-mod="alt"], .mod-pill[data-mod="win"]').forEach(el => el.classList.remove('active'));
+}
+
+/* ========== Toast ========== */
+function showToast(text, type) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || '');
+  el.textContent = text;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+}
+
+/* ========== 蓝牙状态（秒开，无扫描延迟） ========== */
+function setBluetoothStatus(status) {
+  state.bluetooth = status;
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  dot.className = 'status-dot ' + status;
+  text.classList.remove('connected','scanning');
+  if (status === 'disconnected') text.textContent = '未连接';
+  else if (status === 'scanning') { text.textContent = '扫描中...'; text.classList.add('scanning'); }
+  else if (status === 'connected') {
+    text.textContent = '已连接 · ' + state.deviceName;
+    text.classList.add('connected');
+  }
+}
+
+/* ========== 布局切换 ========== */
+const btnCompact = document.getElementById('btnLayoutCompact');
+const btnFull = document.getElementById('btnLayoutFull');
+const numpad = document.getElementById('numpad');
+
+btnCompact.addEventListener('click', () => setLayout('compact'));
+btnFull.addEventListener('click', () => setLayout('full'));
+
+function setLayout(layout, silent) {
+  state.layout = layout;
+  btnCompact.classList.toggle('active', layout === 'compact');
+  btnFull.classList.toggle('active', layout === 'full');
+  if (layout === 'full') numpad.classList.remove('hidden');
+  else numpad.classList.add('hidden');
+  if (!silent) showToast(layout === 'full' ? '完整键盘（含小键盘）' : '精简键盘');
+  saveSettings();
+}
+
+/* ========== 皮肤系统 ========== */
+const SKINS = [
+  { id: 'light', name: '亮色极简', bg: '#F7F8FA', key: '#FFFFFF', special: '#E4E6EB' },
+  { id: 'dark',  name: '优雅深色', bg: '#1C1F24', key: '#2A2E36', special: '#353A44' },
+  { id: 'beige', name: '柔和米色', bg: '#F5F1E8', key: '#EFE9DC', special: '#E7DFCB' },
+];
+function initSkinGrid() {
+  const grid = document.getElementById('skinGrid');
+  grid.innerHTML = SKINS.map(s => {
+    const active = document.body.dataset.theme === s.id ? 'active' : '';
+    return `<div class="skin-item ${active}" data-skin="${s.id}">
+      <div class="skin-preview" style="background:${s.bg}">
+        <div class="preview-key" style="background:${s.special}"></div>
+        <div class="preview-key" style="background:${s.key}"></div>
+        <div class="preview-key" style="background:${s.key}"></div>
+        <div class="preview-key" style="background:${s.special}"></div>
+      </div>
+      <div class="skin-name">${s.name}</div></div>`;
+  }).join('');
+  grid.addEventListener('click', (e) => {
+    const item = e.target.closest('.skin-item');
+    if (!item) return;
+    setTheme(item.dataset.skin);
+    grid.querySelectorAll('.skin-item').forEach(el => el.classList.remove('active'));
+    item.classList.add('active');
+  });
+}
+function setTheme(id) {
+  document.body.dataset.theme = id;
+  showToast('主题：' + SKINS.find(s => s.id === id).name);
+  saveSettings();
+}
+
+/* ========== 抽屉控制 ========== */
+const overlay = document.getElementById('overlay');
+function openDrawer(id) { document.getElementById(id).classList.add('show'); overlay.classList.add('show'); }
+function closeAllDrawers() { document.querySelectorAll('.drawer.show').forEach(el => el.classList.remove('show')); overlay.classList.remove('show'); }
+document.getElementById('btnSettings').addEventListener('click', () => openDrawer('drawerSettings'));
+document.getElementById('btnTheme').addEventListener('click', () => openDrawer('drawerTheme'));
+overlay.addEventListener('click', closeAllDrawers);
+document.querySelectorAll('[data-drawer]').forEach(btn => btn.addEventListener('click', closeAllDrawers));
+
+/* ========== 重新扫描（主动触发才扫） ========== */
+document.getElementById('btnRescan').addEventListener('click', () => {
+  closeAllDrawers();
+  setBluetoothStatus('scanning');
+  pushLog('蓝牙设备扫描中...', 'key');
+  setTimeout(() => {
+    setBluetoothStatus('connected');
+    showToast('已连接 · ' + state.deviceName, 'success');
+    pushLog('▶ 已连接到 ' + state.deviceName, 'combo');
+  }, 1500);
+});
+
+/* ========== 通用开关 ========== */
+document.querySelectorAll('.toggle').forEach(toggle => {
+  toggle.addEventListener('click', () => {
+    toggle.classList.toggle('on');
+  });
+});
+
+/* ========== 联调桥接控制 ========== */
+const bridgeConfig = document.getElementById('bridgeConfig');
+const bridgeEndpoint = document.getElementById('bridgeEndpoint');
+const bridgeBadge = document.getElementById('bridgeBadge');
+
+function updateBridgeToggleUI() {
+  const t = document.getElementById('toggleBridge');
+  t.classList.toggle('on', state.bridge.enabled);
+  bridgeConfig.style.display = state.bridge.enabled ? 'block' : 'none';
+  bridgeEndpoint.value = state.bridge.endpoint;
+  bridgeBadge.style.display = state.bridge.enabled ? 'inline-flex' : 'none';
+}
+document.getElementById('toggleBridge').addEventListener('click', () => {
+  state.bridge.enabled = !state.bridge.enabled;
+  saveSettings();
+  updateBridgeToggleUI();
+  showToast(state.bridge.enabled ? '联调模式已开启' : '联调模式已关闭');
+});
+bridgeEndpoint.addEventListener('change', () => {
+  state.bridge.endpoint = bridgeEndpoint.value.replace(/\/+$/, '');
+  saveSettings();
+});
+document.getElementById('btnTestBridge').addEventListener('click', async () => {
+  const status = document.getElementById('bridgeStatus');
+  status.style.display = 'block';
+  status.className = 'bridge-status';
+  status.textContent = '连接中...';
+  try {
+    const resp = await fetch(bridgeEndpoint.value.replace(/\/+$/, '') + '/ping', { method: 'GET' });
+    if (resp.ok) {
+      status.className = 'bridge-status ok';
+      status.textContent = '✓ 桥接服务已连通';
+    } else throw new Error();
+  } catch {
+    status.className = 'bridge-status err';
+    status.textContent = '✗ 无法连接，请确认 bridge.py 正在运行';
+  }
+});
+document.getElementById('btnSendHello').addEventListener('click', async () => {
+  await sendToBridge({ key: 'hello-world', mods: [], combo: null, label: '测试输出：Hello' });
+  showToast('测试按键已发送');
+  pushLog('▶ 测试输出 → Hello', 'combo');
+});
+
+/* ========== 响应式 ========== */
+function checkResponsiveLayout() {
+  if (window.innerWidth <= 768) {
+    numpad.classList.add('hidden');
+    btnCompact.classList.add('active');
+    btnFull.classList.remove('active');
+  }
+}
+checkResponsiveLayout();
+window.addEventListener('resize', checkResponsiveLayout);
+
+/* ========== 启动 ========== */
+// 1. 应用持久化主题
+if (saved.theme) document.body.dataset.theme = saved.theme;
+// 2. 持久化 Caps Lock 态
+if (state.capsLock) {
+  document.querySelectorAll('.key[data-key="caps"]').forEach(el => el.classList.add('active'));
+}
+// 3. 应用持久化布局
+if (saved.layout) setLayout(saved.layout, true);
+// 4. 蓝牙秒开（不扫描，直接已连接）
+setBluetoothStatus('connected');
+// 5. 桥接 UI
+updateBridgeToggleUI();
+// 6. 初始化皮肤预览
+initSkinGrid();
+// 7. 日志
+pushLog('▶ 平板蓝牙键盘 · 就绪', 'combo');
+
+// 8. Service Worker 注册（离线可用 + 可添加到主屏幕）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('[PWA] SW 注册失败:', err);
+    });
+  });
+}
+
+</script>
+</body>
+</html>

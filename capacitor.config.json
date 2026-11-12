@@ -1,0 +1,19 @@
+{
+  "appId": "com.bluetoothkeyboard.app",
+  "appName": "蓝牙键盘",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "bluetoothkeyboard.local"
+  },
+  "android": {
+    "backgroundColor": "#F7F8FA"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "showSpinner": false,
+      "backgroundColor": "#F7F8FA"
+    }
+  }
+}

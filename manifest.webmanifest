@@ -1,0 +1,27 @@
+{
+  "name": "触屏键盘 · 蓝牙输入",
+  "short_name": "蓝牙键盘",
+  "description": "平板蓝牙 HID 键盘模拟器，横屏即键盘",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#F7F8FA",
+  "theme_color": "#2B8FFF",
+  "lang": "zh-CN",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOTIgMTkyIj48cmVjdCB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgcng9IjM2IiBmaWxsPSIjMjI4NzIiLz48cmVjdCB4PSIyMCIgeT0iNDIiIHdpZHRoPSIxNTIiIGhlaWdodD0iMTA0IiByeD0iMTYiIGZpbGw9IiNmZmYiLz48cmVjdCB4PSIyOCIgeT0iNjAiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgcng9IjQiIGZpbGw9IiMyMzg3MiIvPjxwYXRoIGQ9Ik02MCA4NHY0MGgyNEg2MnoiIGZpbGw9IiMyMjg3MiIvPjxjaXJjbGUgY3g9IjE0NiIgY3k9Ijg2IiByPSIyMiIgZmlsbD0iIzIyODczIi8+PC9zdmc+",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9Ijk2IiBmaWxsPSIjMjI4NzIiLz48cmVjdCB4PSI1NiIgeT0iMTEyIiB3aWR0aD0iNDAwIiBoZWlnaHQ9IjI3MiIgcng9IjMyIiBmaWxsPSIjZmZmIi8+PHJlY3QgeD0iNzYiIHk9IjE0MCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzIyODczIi8+PHJlY3QgeD0iMTY4IiB5PSIxNDAiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjgiIGZpbGw9IiMyMjg3MiIvPjxwYXRoIGQ9Ik0yNjggMTY4djgwSDM2OHYtODBoLTM2OHoiIGZpbGw9IiMyMjg3MiIvPjxjaXJjbGUgY3g9IjM5MiIgY3k9IjE2OCIgcj0iNTYiIGZpbGw9IiMyMjg3MiIvPjxjaXJjbGUgY3g9IjM5MiIgY3k9IjE2OCIgcj0iMjYiIGZpbGw9IiNmZmYiLz48L3N2Zz4=",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
