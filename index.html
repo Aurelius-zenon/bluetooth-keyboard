@@ -185,15 +185,28 @@
   }
   #toast.show{opacity:1;transform:translate(-50%,0);}
 
-  /* ---------- 页面切换 ---------- */
-  #kbwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
-
-  /* ---------- 触控板 ---------- */
+  /* ---------- 手势层（覆盖在键盘上，键盘保持原布局） ---------- */
+  #kbwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative;}
   #pad{
-    display:none;flex:.8 1 0;min-height:0;
-    flex-direction:column;gap:8px;padding:8px 10px 0;
+    position:absolute;inset:0;z-index:20;display:none;
+    flex-direction:column;gap:8px;
+    padding:8px 10px calc(8px + env(safe-area-inset-bottom));
   }
   #pad.on{display:flex;}
+  /* 半透明面板：键盘还在原位置，只是被盖住、点不到 */
+  #pad .pad-surface{
+    background:var(--panel);
+    background:color-mix(in srgb, var(--panel) 80%, transparent);
+    border-color:transparent;
+  }
+  .pad-lock{
+    position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    background:var(--accentSoft);color:var(--accent);
+    font-size:12px;font-weight:600;padding:5px 12px;border-radius:12px;white-space:nowrap;
+  }
+
+  /* ---------- 触控板 ---------- */
+  .spacer-key{flex:1 1 0;min-width:0;}
   .pad-foot{display:flex;gap:8px;justify-content:center;flex:0 0 auto;}
   .pad-foot .chip{
     border:1px solid var(--border);background:var(--key);color:var(--textFn);
@@ -268,6 +281,7 @@
   <section id="pad">
     <div class="pad-surface" id="padSurface">
       <div class="pad-grid"></div>
+      <div class="pad-lock">键盘已锁定 · 手势生效中</div>
       <div class="pad-fingers" id="padFingers"></div>
       <div class="pad-hint">
         <b>单指</b> 移动光标 · 轻点=左键 · <b>双指</b> 上下滑动 · 双指点按=右键
@@ -384,12 +398,14 @@
       {id:',', label:',', shift:'<'},
       {id:'.', label:'.', shift:'>'},
       {id:'/', label:'/', shift:'?'},
+      {sp:2.75},
     ],
     [ // 底行
       {id:'ctrl', label:'Ctrl', cls:'fn wide', w:1.25, toggle:'ctrl'},
       {id:'win', label:'Win', cls:'fn wide', w:1.25, toggle:'win'},
       {id:'alt', label:'Alt', cls:'fn wide', w:1.25, toggle:'alt'},
       {id:'space', label:'', w:6.25},
+      {sp:3.75},
       {id:'delete', label:'Del', cls:'fn wide', w:1.25},
     ],
   ];
@@ -420,6 +436,12 @@
 
   /* ================= 渲染 ================= */
   function makeKey(spec){
+    if (spec.sp){
+      const sp = document.createElement('div');
+      sp.className = 'spacer-key';
+      sp.style.flexGrow = spec.sp;
+      return sp;
+    }
     const el = document.createElement('div');
     el.className = 'key' + (spec.cls ? ' ' + spec.cls : '');
     el.style.flexGrow = spec.w || 1;
