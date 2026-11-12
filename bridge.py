@@ -186,6 +186,87 @@ def _foreground_title() -> str:
         return '(读取失败)'
 
 
+# ---- 目标窗口锁定（解决"焦点被终端抢走"的问题）----
+_target_hwnd = 0
+
+
+def _hwnd_title(hwnd) -> str:
+    try:
+        n = _user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        _user32.GetWindowTextW(hwnd, buf, n + 1)
+        return buf.value or '(无标题窗口)'
+    except Exception:
+        return '(读取失败)'
+
+_USER32_EXTRA = {
+    'SetForegroundWindow': ([wintypes.HWND], ctypes.c_bool),
+    'ShowWindow': ([wintypes.HWND, ctypes.c_int], ctypes.c_bool),
+    'IsIconic': ([wintypes.HWND], ctypes.c_bool),
+    'IsWindow': ([wintypes.HWND], ctypes.c_bool),
+    'IsWindowVisible': ([wintypes.HWND], ctypes.c_bool),
+}
+for _name, (_args, _ret) in _USER32_EXTRA.items():
+    _fn = getattr(_user32, _name)
+    _fn.argtypes = _args
+    _fn.restype = _ret
+
+
+def list_windows():
+    """枚举有标题的可见顶层窗口"""
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    items = []
+
+    def _cb(hwnd, _lparam):
+        try:
+            if not _user32.IsWindowVisible(hwnd):
+                return True
+            n = _user32.GetWindowTextLengthW(hwnd)
+            if n == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            _user32.GetWindowTextW(hwnd, buf, n + 1)
+            pid = wintypes.DWORD()
+            _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            items.append({'hwnd': int(hwnd), 'title': buf.value, 'pid': pid.value})
+        except Exception:
+            pass
+        return True
+
+    _user32.EnumWindows(WNDENUMPROC(_cb), 0)
+    return items
+
+
+def _alt_unlock():
+    """按一下 Alt，绕过 Windows 的 SetForegroundWindow 限制"""
+    try:
+        _user32.keybd_event(0x12, 0, 0, 0)
+        _user32.keybd_event(0x12, 0, 2, 0)
+    except Exception:
+        pass
+
+
+def focus_target() -> bool:
+    """把锁定的目标窗口切到前台"""
+    global _target_hwnd
+    if not _target_hwnd:
+        return False
+    try:
+        if not _user32.IsWindow(_target_hwnd):
+            _target_hwnd = 0
+            return False
+        if _user32.GetForegroundWindow() == _target_hwnd:
+            return True
+        if _user32.IsIconic(_target_hwnd):
+            _user32.ShowWindow(_target_hwnd, 9)   # SW_RESTORE
+        else:
+            _user32.ShowWindow(_target_hwnd, 5)   # SW_SHOW
+        _alt_unlock()
+        return bool(_user32.SetForegroundWindow(_target_hwnd))
+    except Exception:
+        return False
+
+
 def press_vk(vk_code: int) -> bool:
     """单次按键：keyDown → keyUp"""
     a = send_vk(vk_code, is_up=False)
@@ -291,6 +372,9 @@ def _consumer_loop():
         fg = _foreground_title()
         before_fail = _stats['failed']
         try:
+            if _target_hwnd:
+                focus_target()
+                time.sleep(0.03)   # 等窗口真正激活
             send_command(cmd)
         except Exception as e:
             _stats['failed'] += 1
@@ -350,9 +434,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         # 诊断：按键发给了哪个窗口、SendInput 是否成功
         if path == '/diag':
+            _t = {'hwnd': _target_hwnd, 'title': ''}
+            if _target_hwnd:
+                _t['title'] = _hwnd_title(_target_hwnd)
             body = json.dumps({
                 'ok': True,
                 'foreground': _foreground_title(),
+                'target': _t,
                 'queue_size': _command_queue.qsize(),
                 'elevated': _stats['elevated'],
                 'last': {
@@ -366,6 +454,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 'sent': _stats['sent'],
                 'failed': _stats['failed'],
             }).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 可选目标窗口列表
+        if path == '/windows':
+            wins = list_windows()
+            # 过滤掉过短/无意义的标题
+            wins = [w for w in wins if len(w['title'].strip()) >= 1][:40]
+            body = json.dumps({'ok': True, 'windows': wins}).encode()
             self.send_response(200)
             self._cors()
             self.send_header('Content-Length', str(len(body)))
@@ -401,7 +502,25 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     # ---- POST /key ----
     def do_POST(self):
+        global _target_hwnd
         path = urlparse(self.path).path
+
+        # 设置/清除 目标窗口
+        if path == '/target':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
+                data = json.loads(raw or '{}')
+                hwnd = int(data.get('hwnd') or 0)
+            except Exception as e:
+                body = json.dumps({'ok': False, 'error': str(e)}).encode()
+                self.send_response(400); self._cors(); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body); return
+            _target_hwnd = hwnd
+            title = _hwnd_title(hwnd) if hwnd else ''
+            body = json.dumps({'ok': True, 'target': {'hwnd': _target_hwnd, 'title': title}}).encode()
+            self.send_response(200); self._cors(); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
+
         if path != '/key':
             self.send_response(404); self._cors(); self.send_header('Content-Length','2'); self.end_headers(); self.wfile.write(b'{}')
             return

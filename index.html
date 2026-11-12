@@ -145,6 +145,14 @@
   }
   .btn.primary{background:var(--accent);color:#fff;}
   .btn:active{transform:translateY(1px);}
+  .winlist{max-height:38vh;overflow:auto;margin-top:8px;}
+  .winitem{
+    display:block;width:100%;text-align:left;
+    padding:10px 12px;margin-bottom:6px;border-radius:9px;
+    border:1px solid var(--border);background:var(--key);color:var(--text);
+    font-size:13px;line-height:1.35;
+  }
+  .winitem:active{transform:translateY(1px);}
   .hint{font-size:11.5px;line-height:1.6;color:var(--textFn);margin-top:10px;}
 
   /* ---------- Toast ---------- */
@@ -188,6 +196,11 @@
     <div class="field">
       <label>桥接地址（电脑上运行 bridge.py）</label>
       <input id="inBase" placeholder="http://192.168.1.10:8888" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>目标程序（锁定后每次按键前自动切到它，不依赖谁抢焦点）</label>
+      <button class="btn" id="btnPickWin" style="width:100%">选择目标窗口</button>
+      <div id="winList" class="winlist"></div>
     </div>
     <div class="field">
       <label>主题</label>
@@ -460,14 +473,15 @@
       setOnline(!!d.ok);
       if (d.ok){
         const last = d.last || {};
-        const fg = d.foreground || '';
         const stEl = $('#st');
-        if (last.ok === false){
+        if (d.target && d.target.hwnd){
+          stEl.textContent = '已锁定 · ' + shortWin(d.target.title);
+        } else if (last.ok === false){
           stEl.textContent = '注入失败 · 错误 ' + (last.err || '?');
         } else if (last.target_window){
           stEl.textContent = '已连接 · 目标：' + shortWin(last.target_window);
         } else {
-          stEl.textContent = '已连接 · 当前：' + shortWin(fg);
+          stEl.textContent = '已连接 · 当前：' + shortWin(d.foreground || '');
         }
         if (!d.elevated){
           stEl.title = '非管理员运行：无法向管理员权限的程序输入';
@@ -493,6 +507,47 @@
     dlg.showModal();
   });
   $('#btnCancel').addEventListener('click', () => dlg.close());
+
+  // 选择目标窗口
+  $('#btnPickWin').addEventListener('click', async () => {
+    const list = $('#winList');
+    list.innerHTML = '<div class="hint">读取中…</div>';
+    try{
+      const r = await fetch(st.base + '/windows', {cache:'no-store'});
+      const d = await r.json();
+      list.innerHTML = '';
+      const off = document.createElement('button');
+      off.className = 'winitem';
+      off.textContent = '不锁定（跟随当前前台窗口）';
+      off.addEventListener('click', async () => {
+        await fetch(st.base + '/target', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({hwnd: 0}),
+        });
+        list.innerHTML = '';
+        toast('已取消锁定');
+        ping();
+      });
+      list.appendChild(off);
+      (d.windows || []).forEach(w => {
+        const b = document.createElement('button');
+        b.className = 'winitem';
+        b.textContent = w.title;
+        b.addEventListener('click', async () => {
+          await fetch(st.base + '/target', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({hwnd: w.hwnd}),
+          });
+          list.innerHTML = '';
+          toast('已锁定：' + w.title);
+          ping();
+        });
+        list.appendChild(b);
+      });
+    }catch(e){
+      list.innerHTML = '<div class="hint">读取失败，请确认桥接已连接</div>';
+    }
+  });
   $('#btnSave').addEventListener('click', () => {
     const v = inBase.value.trim();
     if (v){
