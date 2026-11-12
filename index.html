@@ -1131,7 +1131,8 @@
   const padFingers = $('#padFingers');
   padSurface.addEventListener('contextmenu', e => e.preventDefault());
 
-  const SENS = 1.6;
+  const SENS = 2.5;
+  const SCROLL_SENS = 0.88;   // 滚动速度单独固定，避免调指针速度时连带变化
   let wakeLock = null;
 
   /* ================= 全屏锁定（键盘页常驻使用） ================= */
@@ -1295,7 +1296,7 @@
 
     if (n === 2){
       /* 双指只做上下滚动：忽略横向位移与两指间距变化（不做缩放） */
-      const dy = (c.y - lastC.y) * SENS * 0.55;
+      const dy = (c.y - lastC.y) * SCROLL_SENS;
       if (Math.abs(dy) > 0.5){
         padSend({type:'scroll', dy: Math.round(dy)});
         scrolled = true;
