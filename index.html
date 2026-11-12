@@ -266,7 +266,7 @@
     <div class="pad-fingers" id="padFingers"></div>
     <div class="pad-hint">
       <b>单指</b> 移动光标 · 轻点 = 左键 · <b>双指点按</b> = 右键<br>
-      <b>双指</b> 上下滚动 · 左右横移 · 捏合缩放<br>
+      <b>双指</b> 上下滑动（仅滚动）<br>
       <b>三指</b> 左右切换虚拟桌面<br>
       <b>四指</b> 上划任务视图 · 下划显示桌面 · 左右切换窗口<br>
       <b>锁定模式</b> 全屏常亮，手势只发给电脑，不再叠加安卓系统手势
@@ -1249,16 +1249,13 @@
   }
 
   const pts = new Map();
-  let startT = 0, startC = null, lastC = null, maxF = 0, moved = 0,
-      lastDist = 0, scrolled = false, zoomAcc = 0;
-  let twoMode = '', twoAccScroll = 0, twoAccPinch = 0;
+  let startT = 0, startC = null, lastC = null, maxF = 0, moved = 0, scrolled = false;
 
   /* 切页/重连时清空残留的指头状态，避免按错指头数 */
   resetPadState = () => {
     pts.clear();
     drawFingers(0);
-    twoMode = '';
-    zoomAcc = 0; scrolled = false; maxF = 0; moved = 0;
+    scrolled = false; maxF = 0; moved = 0;
   };
 
   function centroid(){
@@ -1266,11 +1263,6 @@
     pts.forEach(p => { x += p.x; y += p.y; });
     const n = pts.size || 1;
     return {x: x / n, y: y / n};
-  }
-  function spread(){
-    const arr = [...pts.values()];
-    if (arr.length < 2) return 0;
-    return Math.hypot(arr[0].x - arr[1].x, arr[0].y - arr[1].y);
   }
   function drawFingers(n){
     const count = Math.min(n, 4);
@@ -1288,11 +1280,9 @@
       startT = performance.now();
       startC = centroid();
       lastC = startC;
-      maxF = 1; moved = 0; scrolled = false; zoomAcc = 0; twoMode = '';
+      maxF = 1; moved = 0; scrolled = false;
     }
     if (pts.size === 2){
-      twoMode = ''; twoAccScroll = 0; twoAccPinch = 0;
-      lastDist = spread();
       lastC = centroid();
     }
     maxF = Math.max(maxF, pts.size);
@@ -1317,36 +1307,13 @@
     }
 
     if (n === 2){
-      const d = spread();
-      const cd = Math.hypot(c.x - lastC.x, c.y - lastC.y);
-      const dd = d - lastDist;
-
-      /* 先判定模式，再执行，判完锁定到抬手：
-         质心位移占优 = 滚动；间距变化占优 = 缩放。
-         阈值 1.8 倍 + 起始累积 6px，避免双指滚动时的抖动被误判成缩放 */
-      if (!twoMode){
-        twoAccScroll += cd;
-        twoAccPinch += Math.abs(dd);
-        if (twoAccScroll + twoAccPinch >= 6){
-          twoMode = twoAccPinch > twoAccScroll * 1.8 ? 'pinch' : 'scroll';
-        }
+      /* 双指只做上下滚动：忽略横向位移与两指间距变化（不做缩放），
+         避免和系统缩放、平板自身的多指手势互相干扰 */
+      const dy = (c.y - lastC.y) * sens * 0.55;
+      if (Math.abs(dy) > 0.5){
+        padSend({type:'scroll', dy: Math.round(dy)});
+        scrolled = true;
       }
-
-      if (twoMode === 'pinch'){
-        zoomAcc += dd;
-        if (Math.abs(zoomAcc) > 10){
-          padSend({type:'zoom', dy: zoomAcc > 0 ? 120 : -120});
-          zoomAcc = 0;
-        }
-      } else if (twoMode === 'scroll'){
-        const dx = (c.x - lastC.x) * sens * 0.55;
-        const dy = (c.y - lastC.y) * sens * 0.55;
-        if (Math.abs(dx) + Math.abs(dy) > 0.5){
-          padSend({type:'scroll', dx: Math.round(dx), dy: Math.round(dy)});
-          scrolled = true;
-        }
-      }
-      lastDist = d;
       lastC = c;
       return;
     }
@@ -1360,11 +1327,9 @@
     pts.delete(e.pointerId);
     drawFingers(pts.size);
 
-    // 手指数量变化后重建基准，否则会用旧的 lastC/lastDist 算出巨大跳变
+    // 手指数量变化后重建基准，否则会用旧的 lastC 算出巨大跳变
     if (pts.size === 2){
-      twoMode = ''; twoAccScroll = 0; twoAccPinch = 0;
       lastC = centroid();
-      lastDist = spread();
       return;
     }
     if (pts.size === 1){ lastC = centroid(); return; }
