@@ -468,7 +468,22 @@ def send_command(command: dict):
         return
 
     # ---- 跳过裸修饰键 ----
-    if raw_key in ('ctrl','alt','shift','win','cmd','win_r') and not mods:
+    # ctrl/alt/win 由 /hold 接口负责按住；单独的 shift 是一次"轻敲"，
+    # 用于切换输入法中/英（微软拼音、搜狗等默认都是 Shift）。
+    if raw_key in ('ctrl','alt','win','cmd','win_r') and not mods:
+        return
+
+    # ---- 单独 Shift：中/英切换（保持 30ms 按下，部分输入法需要更长的 keydown）----
+    if raw_key == 'shift' and not mods:
+        send_vk(VK_CODE['shift'], is_up=False)
+        time.sleep(0.03)
+        send_vk(VK_CODE['shift'], is_up=True)
+        _stats['last_key'] = 'shift'
+        _stats['last_combo'] = 'shift'
+        _stats['last_fg'] = _foreground_title()
+        _stats['last_ok'] = True
+        _stats['last_ts'] = time.time()
+        print("  [bridge] ⌨  SHIFT  (切换中/英)")
         return
 
     # ---- 解析修饰键 ----
