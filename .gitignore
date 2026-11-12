@@ -31,6 +31,11 @@ android.keystore
 .idea/
 *.iml
 
+# TLS 证书（本地生成，含私钥，不要提交）
+ca.crt
+server.crt
+server.key
+
 # 临时
 *.log
 *.tmp

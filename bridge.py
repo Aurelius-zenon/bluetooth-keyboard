@@ -21,6 +21,7 @@ import mimetypes
 import os
 import queue
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -32,6 +33,109 @@ STATIC_ROOT = os.path.dirname(os.path.abspath(__file__))
 STATIC_FILES = {
     '/index.html', '/manifest.webmanifest', '/sw.js',
 }
+
+# TLS 证书文件（--gen-cert 生成）
+CA_CERT_FILE = os.path.join(STATIC_ROOT, 'ca.crt')
+SERVER_CERT_FILE = os.path.join(STATIC_ROOT, 'server.crt')
+SERVER_KEY_FILE = os.path.join(STATIC_ROOT, 'server.key')
+
+
+def _local_ips():
+    """收集本机所有 IPv4，用于证书 SAN"""
+    ips = {'127.0.0.1'}
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    return sorted(ips)
+
+
+def gen_cert():
+    """生成本地 CA + 服务器证书（SAN 含本机所有 IP）"""
+    try:
+        import datetime
+        import ipaddress
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+    except ImportError:
+        print("需要 cryptography 库：pip install cryptography")
+        return False
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'TouchKeyboard Local CA')])
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, content_commitment=False, key_encipherment=False,
+                data_encipherment=False, key_agreement=False, key_cert_sign=True,
+                crl_sign=True, encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    srv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    sans = [x509.DNSName('localhost')]
+    for ip in _local_ips():
+        sans.append(x509.IPAddress(ipaddress.ip_address(ip)))
+    srv_cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'touch-keyboard-bridge')]))
+        .issuer_name(ca_cert.subject)
+        .public_key(srv_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=825))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(srv_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    with open(CA_CERT_FILE, 'wb') as f:
+        f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
+    with open(SERVER_CERT_FILE, 'wb') as f:
+        f.write(srv_cert.public_bytes(serialization.Encoding.PEM))
+    with open(SERVER_KEY_FILE, 'wb') as f:
+        f.write(srv_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+
+    print()
+    print("证书已生成：")
+    print(f"  {CA_CERT_FILE}      ← 传到平板安装为「CA 证书」")
+    print(f"  {SERVER_CERT_FILE}")
+    print(f"  {SERVER_KEY_FILE}")
+    print()
+    print("SAN 覆盖的地址：localhost, " + ', '.join(_local_ips()))
+    print()
+    return True
 
 # ---------------------------------------------------------------------------
 # 0. 类型定义（SendInput 需要的 ctypes 结构体）
@@ -636,7 +740,18 @@ def main():
     parser.add_argument('--port', type=int, default=8888)
     parser.add_argument('--bench', action='store_true', help='启动后自动跑 benchmark 测试')
     parser.add_argument('--keep-window', action='store_true', help='不自动最小化控制台')
+    parser.add_argument('--tls', action='store_true', help='启用 HTTPS（需先 --gen-cert 生成证书）')
+    parser.add_argument('--gen-cert', action='store_true', help='生成本地 CA 与服务器证书后退出')
     args = parser.parse_args()
+
+    if args.gen_cert:
+        gen_cert()
+        return
+
+    if args.tls and not (os.path.isfile(SERVER_CERT_FILE) and os.path.isfile(SERVER_KEY_FILE)):
+        print("[!] 未找到证书，先自动生成…")
+        if not gen_cert():
+            return
 
     # 启动消费者线程（守护）
     consumer = threading.Thread(target=_consumer_loop, name='sendinput-consumer', daemon=True)
@@ -659,17 +774,30 @@ def main():
     except Exception:
         _stats['elevated'] = False
 
+    scheme = 'http'
+    if args.tls:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(SERVER_CERT_FILE, SERVER_KEY_FILE)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = 'https'
+
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║  平板触屏键盘 · 桥接服务 (ctypes SendInput)       ║")
     print("╠══════════════════════════════════════════════════╣")
-    print(f"║  平板打开:  http://{lan_ip}:{args.port}/".ljust(52) + "║")
-    print(f"║  状态探针:  http://{lan_ip}:{args.port}/ping".ljust(52) + "║")
+    print(f"║  平板打开:  {scheme}://{lan_ip}:{args.port}/".ljust(52) + "║")
+    print(f"║  状态探针:  {scheme}://{lan_ip}:{args.port}/ping".ljust(52) + "║")
     print(f"║  按键接口:  POST /key  (JSON)".ljust(52) + "║")
     print("╚══════════════════════════════════════════════════╝")
     print()
     print("  平板与电脑连同一个 WiFi，浏览器打开上面「平板打开」的地址即可")
     print("  该网页与桥接服务同源，不会被浏览器拦截")
+    if args.tls:
+        print()
+        print("  [HTTPS] 首次使用需在平板安装 CA 证书：")
+        print(f"         把 {os.path.basename(CA_CERT_FILE)} 传到平板")
+        print("         设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书")
     print()
     print("  ★ 按键只会送入【当前前台窗口】")
     print("    先用鼠标点一下目标程序（记事本 / 浏览器输入框等），再按平板键盘")

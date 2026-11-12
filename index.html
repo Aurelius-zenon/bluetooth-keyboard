@@ -211,9 +211,9 @@
       </div>
     </div>
     <div class="hint">
-      平板与电脑连同一个 WiFi。电脑执行 <b>python bridge.py</b>，
-      终端会打印「平板打开: http://xxx:8888/」，用平板浏览器打开这个地址即可直接输入。
-      APK 内是 https 页面，无法直连 http 桥接，请在浏览器里用上面的地址。
+      电脑端启动：<b>python bridge.py --tls</b>，终端会打印「平板打开: https://xxx:8888/」。
+      首次使用需在平板安装电脑生成的 <b>ca.crt</b>（设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书）。
+      安装后本 App 内直接填同一个 https 地址即可打字。
     </div>
     <div class="dlg-actions">
       <button class="btn" id="btnCancel">关闭</button>
@@ -553,6 +553,9 @@
     if (v){
       st.base = v.replace(/\/+$/, '');
       localStorage.setItem('kb.base', st.base);
+      if (location.protocol === 'https:' && st.base.startsWith('http://')){
+        toast('https 页面无法连 http 桥接，请改用 https 地址');
+      }
     }
     dlg.close();
     ping();
