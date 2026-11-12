@@ -89,6 +89,8 @@
   }
   .row{display:flex;gap:6px;flex:1 1 0;min-height:0;}
   .row.fnrow{flex:.8 1 0;}
+  .row.cursor{flex:.55 1 0;}
+  .row.cursor .key{font-size:calc(var(--fs-fn) * 1.15);}
 
   .key{
     flex:1 1 0;min-width:0;position:relative;
@@ -330,6 +332,19 @@
     {id:'f11', label:'F11', cls:'fn'}, {id:'f12', label:'F12', cls:'fn'},
   ];
 
+  /* 光标行：换行编辑时移动插入点，结构紧凑一些 */
+  const CURSOR_ROW = [
+    {id:'left', label:'←', cls:'fn wide', w:1.75},
+    {id:'up', label:'↑', cls:'fn wide', w:1.75},
+    {id:'down', label:'↓', cls:'fn wide', w:1.75},
+    {id:'right', label:'→', cls:'fn wide', w:1.75},
+    {id:'home', label:'Home', cls:'fn wide', w:2},
+    {id:'end', label:'End', cls:'fn wide', w:2},
+    {id:'pageup', label:'PgUp', cls:'fn wide', w:2},
+    {id:'pagedown', label:'PgDn', cls:'fn wide', w:2},
+  ];
+  CURSOR_ROW.slim = true;
+
   const ROWS = [
     [ // 数字行 15U
       {id:'`', label:'`', shift:'~'},
@@ -367,9 +382,10 @@
       {id:'m', label:'M'},
       {id:',', label:',', shift:'<'},
       {id:'.', label:'.', shift:'>'},
-      {id:'/', label:'/', shift:'?'},
+        {id:'/', label:'/', shift:'?'},
       {id:'shift2', label:'Shift', cls:'fn wide', w:2.75, toggle:'shift'},
     ],
+    CURSOR_ROW,
     [ // 底行 15U
       {id:'ctrl', label:'Ctrl', cls:'fn wide', w:1.25, toggle:'ctrl'},
       {id:'win', label:'Win', cls:'fn wide', w:1.25, toggle:'win'},
@@ -437,7 +453,7 @@
     }
     ROWS.forEach(rowKeys => {
       const r = document.createElement('div');
-      r.className = 'row';
+      r.className = 'row' + (rowKeys.slim ? ' cursor' : '');
       rowKeys.forEach(k => r.appendChild(makeKey(k)));
       kb.appendChild(r);
     });
