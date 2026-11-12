@@ -530,6 +530,13 @@ def send_command(command: dict):
 # ---------------------------------------------------------------------------
 
 _command_queue: queue.Queue = queue.Queue(maxsize=256)
+
+
+class BridgeServer(ThreadingHTTPServer):
+    """单实例：端口被占用时直接报错，避免两个桥接同时注入按键"""
+    allow_reuse_address = False
+    daemon_threads = True
+    allow_reuse_port = False
 _start_time = time.monotonic()
 
 
@@ -771,7 +778,7 @@ def main():
     consumer.start()
 
     try:
-        server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
+        server = BridgeServer((args.host, args.port), BridgeHandler)
     except OSError as e:
         print(f"[!] 端口 {args.port} 无法监听（可能已有一个桥接在运行）：{e}")
         print("    如果平板已经能连上，就不用重复启动。")
@@ -800,6 +807,17 @@ def main():
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
         scheme = 'https'
 
+    # 降级端口：额外开一个纯 HTTP 端口（port+1），HTTPS 出问题时 App 可自动回落
+    fallback_port = args.port + 1
+    fallback_server = None
+    if args.tls:
+        try:
+            fallback_server = BridgeServer((args.host, fallback_port), BridgeHandler)
+            threading.Thread(target=fallback_server.serve_forever, daemon=True).start()
+        except OSError as e:
+            fallback_server = None
+            print(f"  [降级] HTTP 端口 {fallback_port} 未启用：{e}")
+
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║  平板触屏键盘 · 桥接服务 (ctypes SendInput)       ║")
@@ -816,6 +834,8 @@ def main():
         print("  [HTTPS] 首次使用需在平板安装 CA 证书：")
         print(f"         把 {os.path.basename(CA_CERT_FILE)} 传到平板")
         print("         设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书")
+        if fallback_server:
+            print(f"  [降级]  同时监听 HTTP: http://{lan_ip}:{fallback_port}/  (HTTPS 失败时自动回落)")
     print()
     print("  ★ 按键只会送入【当前前台窗口】")
     print("    先用鼠标点一下目标程序（记事本 / 浏览器输入框等），再按平板键盘")

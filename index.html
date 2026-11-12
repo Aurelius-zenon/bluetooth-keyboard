@@ -386,25 +386,26 @@
 
   function send(spec){
     const cmd = buildCmd(spec);
-    const url = st.base + '/key';
-    try{
-      fetch(url, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(cmd),
-        keepalive: true,
-        mode: 'cors',
-      }).then(r => {
-        if (!r.ok) throw new Error(r.status);
-        setOnline(true);
-      }).catch(() => {
-        setOnline(false);
-        toast('未连上桥接 · 检查 bridge.py');
-      });
-    }catch(e){
-      setOnline(false);
-    }
+    post(cmd);
     toast((spec.label || spec.id) + '  ' + (cmd.combo ? cmd.combo : ''));
+  }
+
+  /* 发送一个按键；失败则入队，等连接恢复后补发 */
+  function post(cmd){
+    fetch(st.base + '/key', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cmd),
+      keepalive: true,
+      mode: 'cors',
+    }).then(r => {
+      if (!r.ok) throw new Error(r.status);
+      if (!st.online) setOnline(true);
+      failCount = 0;
+      flushQueue();
+    }).catch(() => {
+      enqueue(cmd);
+    });
   }
 
   /* ================= 交互 ================= */
@@ -453,17 +454,78 @@
     return all.find(k => k.id === id) || null;
   }
 
-  /* ================= 桥接连通性 ================= */
+  /* ================= 连接管理：降级链 + 自动重连 ================= */
+  let pingCtrl = null;
+  let connecting = false;
+  let failCount = 0;
+  let retryTimer = null;
+  const outbox = [];          // 断线期间的按键（最多 60 个）
+
   function setOnline(ok){
     st.online = ok;
     const dot = $('#dot'), stEl = $('#st');
     dot.classList.toggle('ok', ok);
     dot.classList.toggle('err', !ok);
-    stEl.textContent = ok ? ('已连接 · ' + st.base.replace(/^https?:\/\//,'')) : '未连接桥接';
-    if (ok) localStorage.setItem('kb.lastBase', st.base);
+    if (!ok) stEl.textContent = '未连接桥接 · 自动重连中';
+    else stEl.textContent = '已连接 · ' + st.base.replace(/^https?:\/\//, '');
+    if (ok) remember(st.base);
   }
 
-  let pingCtrl = null;
+  /* 记录可用地址，供降级时依次尝试 */
+  function remember(base){
+    localStorage.setItem('kb.base', base);
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem('kb.bases') || '[]'); } catch(e){}
+    list = [base, ...list.filter(x => x !== base)].slice(0, 5);
+    localStorage.setItem('kb.bases', JSON.stringify(list));
+  }
+
+  function enqueue(cmd){
+    if (outbox.length < 60) outbox.push(cmd);
+    if (st.online){
+      setOnline(false);
+      toast('连接断开，按键已缓存');
+    }
+    onLost();
+  }
+
+  function flushQueue(){
+    if (!outbox.length) return;
+    const pending = outbox.splice(0, outbox.length);
+    pending.forEach(cmd => post(cmd));
+  }
+
+  /* 降级候选地址：当前 → 同 IP 的 http 端口 → 历史地址 */
+  function candidates(){
+    const list = [];
+    const push = u => { if (u && list.indexOf(u) < 0) list.push(u); };
+    push(st.base);
+    const m = st.base.match(/^(https?):\/\/([^/:]+):?(\d+)?\/?$/);
+    if (m){
+      const host = m[2];
+      const port = Number(m[3] || (m[1] === 'https' ? 8888 : 80));
+      push('https://' + host + ':' + port);
+      push('http://' + host + ':' + (port + 1));   // bridge 同时监听的 HTTP 降级端口
+      push('http://' + host + ':' + port);
+    }
+    try {
+      JSON.parse(localStorage.getItem('kb.bases') || '[]').forEach(push);
+    } catch(e){}
+    return list;
+  }
+
+  function probe(base){
+    return new Promise((resolve) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1200);
+      fetch(base + '/ping', {signal: ctrl.signal, cache:'no-store'})
+        .then(r => r.json())
+        .then(j => { clearTimeout(timer); resolve(!!(j && j.ok)); })
+        .catch(() => { clearTimeout(timer); resolve(false); });
+    });
+  }
+
+  /* 主连接检查 */
   async function ping(){
     try{
       if (pingCtrl) pingCtrl.abort();
@@ -472,27 +534,86 @@
       const r = await fetch(st.base + '/diag', {signal: pingCtrl.signal, cache:'no-store'});
       clearTimeout(t);
       const d = await r.json();
-      setOnline(!!d.ok);
-      if (d.ok){
-        const last = d.last || {};
-        const stEl = $('#st');
-        if (d.target && d.target.hwnd){
-          stEl.textContent = '已锁定 · ' + shortWin(d.target.title);
-        } else if (last.ok === false){
-          stEl.textContent = '注入失败 · 错误 ' + (last.err || '?');
-        } else if (last.target_window){
-          stEl.textContent = '已连接 · 目标：' + shortWin(last.target_window);
-        } else {
-          stEl.textContent = '已连接 · 当前：' + shortWin(d.foreground || '');
-        }
-        if (!d.elevated){
-          stEl.title = '非管理员运行：无法向管理员权限的程序输入';
+      if (!d.ok) throw new Error('down');
+      if (!st.online) setOnline(true);
+      failCount = 0;
+      flushQueue();
+      const last = d.last || {};
+      const stEl = $('#st');
+      if (d.target && d.target.hwnd){
+        stEl.textContent = '已锁定 · ' + shortWin(d.target.title);
+      } else if (last.ok === false){
+        stEl.textContent = '注入失败 · 错误 ' + (last.err || '?');
+      } else if (last.target_window){
+        stEl.textContent = '已连接 · 目标：' + shortWin(last.target_window);
+      } else {
+        stEl.textContent = '已连接 · 当前：' + shortWin(d.foreground || '');
+      }
+      if (!d.elevated){
+        stEl.title = '非管理员运行：无法向管理员权限的程序输入';
+      }
+      return true;
+    }catch(e){
+      if (st.online) setOnline(false);
+      onLost();
+      return false;
+    }
+  }
+
+  function onLost(){
+    if (connecting) return;
+    failCount++;
+    if (failCount >= 2){
+      failCount = 0;
+      failover();
+    } else {
+      scheduleRetry(1500);
+    }
+  }
+
+  function scheduleRetry(delay){
+    if (retryTimer || connecting) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      ping();
+    }, delay);
+  }
+
+  /* 降级：逐个尝试候选地址，都失败就重新扫描局域网 */
+  let lastScan = 0;
+  async function failover(){
+    if (connecting) return;
+    connecting = true;
+    const stEl = $('#st');
+    stEl.textContent = '重连中…';
+    try{
+      for (const base of candidates()){
+        if (await probe(base)){
+          st.base = base;
+          setOnline(true);
+          flushQueue();
+          toast('已恢复连接');
+          return;
         }
       }
-      return !!d.ok;
-    }catch(e){
-      setOnline(false);
-      return false;
+      // 扫描很重，20 秒内只做一次
+      if (Date.now() - lastScan > 20000){
+        lastScan = Date.now();
+        stEl.textContent = '搜索电脑中…';
+        const hit = await autoDiscover((n) => { stEl.textContent = '搜索电脑中… 已扫 ' + n; });
+        if (hit){
+          st.base = hit;
+          setOnline(true);
+          flushQueue();
+          toast('已重新连上电脑');
+          return;
+        }
+      }
+      stEl.textContent = '未连接 · 5 秒后重试';
+    } finally {
+      connecting = false;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => { retryTimer = null; ping(); }, 5000);
     }
   }
 
@@ -525,7 +646,10 @@
 
   async function autoDiscover(onProgress){
     const prefixes = [];
-    const last = localStorage.getItem('kb.lastBase');
+    let last = localStorage.getItem('kb.lastBase');
+    if (!last){
+      try { last = (JSON.parse(localStorage.getItem('kb.bases') || '[]') || [])[0]; } catch(e){}
+    }
     if (last){
       const m = last.match(/https?:\/\/(\d+\.\d+\.\d+)\./);
       if (m) prefixes.push(m[1]);
