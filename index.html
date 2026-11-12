@@ -89,8 +89,6 @@
   }
   .row{display:flex;gap:6px;flex:1 1 0;min-height:0;}
   .row.fnrow{flex:.8 1 0;}
-  .row.cursor{flex:.55 1 0;}
-  .row.cursor .key{font-size:calc(var(--fs-fn) * 1.15);}
 
   .key{
     flex:1 1 0;min-width:0;position:relative;
@@ -188,15 +186,12 @@
   #toast.show{opacity:1;transform:translate(-50%,0);}
 
   /* ---------- 页面切换 ---------- */
-  .tabs{display:flex;gap:2px;background:var(--keyFn);border:1px solid var(--border);border-radius:18px;padding:2px;}
-  .tab{border:0;background:transparent;color:var(--textFn);font-size:13px;height:30px;padding:0 14px;border-radius:16px;font-family:inherit;}
-  .tab.on{background:var(--panel);color:var(--text);box-shadow:var(--shadow);}
-  #kb.off{display:none!important;}
+  #kbwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 
   /* ---------- 触控板 ---------- */
   #pad{
-    flex:1 1 auto;min-height:0;display:none;flex-direction:column;gap:8px;
-    padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+    display:none;flex:.8 1 0;min-height:0;
+    padding:8px 10px 0;
   }
   #pad.on{display:flex;}
   .pad-surface{
@@ -215,22 +210,11 @@
     -webkit-mask-image:radial-gradient(circle at 50% 45%, #000 32%, transparent 80%);
     mask-image:radial-gradient(circle at 50% 45%, #000 32%, transparent 80%);
   }
-  .pad-hint{position:relative;color:var(--textFn);font-size:13px;line-height:2;text-align:center;pointer-events:none;padding:0 24px;}
+  .pad-hint{position:relative;color:var(--textFn);font-size:12.5px;line-height:1.6;text-align:center;pointer-events:none;padding:0 18px;}
   .pad-hint b{color:var(--text);font-weight:600;}
-  .pad-badge{
-    position:absolute;top:14px;left:50%;transform:translateX(-50%) translateY(-6px);
-    background:var(--accentSoft);color:var(--accent);font-size:13px;font-weight:600;
-    padding:6px 14px;border-radius:14px;opacity:0;transition:opacity .16s,transform .16s;white-space:nowrap;
-  }
-  .pad-badge.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .pad-fingers{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;gap:12px;opacity:0;transition:opacity .12s;pointer-events:none;}
   .pad-fingers.show{opacity:1;}
   .pad-fingers i{width:24px;height:24px;border-radius:50%;border:2px solid var(--accent);background:var(--accentSoft);}
-  .pad-foot{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;font-size:12px;color:var(--textFn);}
-  .pad-foot .chip{border:1px solid var(--border);background:var(--key);border-radius:12px;padding:5px 10px;}
-  .pad-foot .chip:active{transform:translateY(1px);}
-  .pad-foot .chip.off{opacity:.45;}
-  .pad-surface.locked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accentSoft) inset, var(--shadow);}
 
   /* 窄高屏微调 */
   @media (max-height:520px){
@@ -250,38 +234,25 @@
   </div>
   <div class="spacer"></div>
   <div id="held"></div>
-  <div class="tabs">
-    <button class="tab on" data-page="kb">键盘</button>
-    <button class="tab" data-page="pad">手势</button>
-  </div>
   <button class="iconbtn" id="btnFn">Fn</button>
+  <button class="iconbtn" id="btnPad">手势</button>
   <button class="iconbtn" id="btnTheme">主题</button>
   <button class="iconbtn" id="btnFull">全屏</button>
   <button class="iconbtn" id="btnSet">设置</button>
 </header>
 
-<main id="kb"></main>
-
-<section id="pad">
-  <div class="pad-surface" id="padSurface">
-    <div class="pad-grid"></div>
-    <div class="pad-badge" id="padBadge"></div>
-    <div class="pad-fingers" id="padFingers"></div>
-    <div class="pad-hint">
-      <b>单指</b> 移动光标 · 轻点 = 左键 · <b>双指点按</b> = 右键<br>
-      <b>双指</b> 上下滑动（仅滚动）<br>
-      <b>三指</b> 左右切换虚拟桌面<br>
-      <b>四指</b> 上划任务视图 · 下划显示桌面 · 左右切换窗口<br>
-      <b>锁定模式</b> 全屏常亮，手势只发给电脑，不再叠加安卓系统手势
+<main id="kbwrap">
+  <section id="pad">
+    <div class="pad-surface" id="padSurface">
+      <div class="pad-grid"></div>
+      <div class="pad-fingers" id="padFingers"></div>
+      <div class="pad-hint">
+        <b>单指</b> 移动光标 · 轻点=左键 · <b>双指</b> 上下滑动 · 双指点按=右键
+      </div>
     </div>
-  </div>
-  <div class="pad-foot">
-    <span class="chip" id="padSens">指针速度 1.6×</span>
-    <span class="chip" id="padTap">轻点单击：开</span>
-    <span class="chip" id="padThree">三指上下：关</span>
-    <span class="chip" id="padLock">锁定模式：关</span>
-  </div>
-</section>
+  </section>
+  <div id="kb"></div>
+</main>
 
 <dialog id="dlg">
   <div class="dlg">
@@ -333,19 +304,6 @@
     {id:'f11', label:'F11', cls:'fn'}, {id:'f12', label:'F12', cls:'fn'},
   ];
 
-  /* 光标行：换行编辑时移动插入点，结构紧凑一些 */
-  const CURSOR_ROW = [
-    {id:'left', label:'←', cls:'fn wide', w:1.75},
-    {id:'up', label:'↑', cls:'fn wide', w:1.75},
-    {id:'down', label:'↓', cls:'fn wide', w:1.75},
-    {id:'right', label:'→', cls:'fn wide', w:1.75},
-    {id:'home', label:'Home', cls:'fn wide', w:2},
-    {id:'end', label:'End', cls:'fn wide', w:2},
-    {id:'pageup', label:'PgUp', cls:'fn wide', w:2},
-    {id:'pagedown', label:'PgDn', cls:'fn wide', w:2},
-  ];
-  CURSOR_ROW.slim = true;
-
   const ROWS = [
     [ // 数字行 15U
       {id:'`', label:'`', shift:'~'},
@@ -386,16 +344,12 @@
       {id:'/', label:'/', shift:'?'},
       {id:'shift2', label:'Shift', cls:'fn wide', w:2.75, toggle:'shift'},
     ],
-    CURSOR_ROW,
-    [ // 底行 15U
+    [ // 底行
       {id:'ctrl', label:'Ctrl', cls:'fn wide', w:1.25, toggle:'ctrl'},
       {id:'win', label:'Win', cls:'fn wide', w:1.25, toggle:'win'},
       {id:'alt', label:'Alt', cls:'fn wide', w:1.25, toggle:'alt'},
       {id:'space', label:'', w:6.25},
-      {id:'alt2', label:'Alt', cls:'fn wide', w:1.25, toggle:'alt'},
-      {id:'win2', label:'Win', cls:'fn wide', w:1.25, toggle:'win'},
       {id:'delete', label:'Del', cls:'fn wide', w:1.25},
-      {id:'ctrl2', label:'Ctrl', cls:'fn wide', w:1.25, toggle:'ctrl'},
     ],
   ];
 
@@ -454,7 +408,7 @@
     }
     ROWS.forEach(rowKeys => {
       const r = document.createElement('div');
-      r.className = 'row' + (rowKeys.slim ? ' cursor' : '');
+      r.className = 'row';
       rowKeys.forEach(k => r.appendChild(makeKey(k)));
       kb.appendChild(r);
     });
@@ -1158,84 +1112,28 @@
   applyTheme(localStorage.getItem('kb.theme') || 'light');
   render();
 
-  /* ================= 页面切换（键盘 / 手势） ================= */
+  /* ================= 手势区（键盘页可选，单指/双指） ================= */
   const padEl = $('#pad');
-  let resetPadState = null;   // 手势状态初始化后挂上，切页时清空残留手指
-  function setPage(page){
-    localStorage.setItem('kb.page', page);
-    $('#kb').classList.toggle('off', page !== 'kb');
-    padEl.classList.toggle('on', page === 'pad');
-    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.page === page));
-    $('#btnFn').style.visibility = page === 'kb' ? 'visible' : 'hidden';
+  let padOn = localStorage.getItem('kb.pad') === '1';
+  let resetPadState = null;   // 手势状态初始化后挂上，收起时清空残留手指
+
+  function applyPad(){
+    padEl.classList.toggle('on', padOn);
+    $('#btnPad').style.color = padOn ? 'var(--accent)' : '';
+    $('#btnPad').style.borderColor = padOn ? 'var(--accent)' : '';
+    localStorage.setItem('kb.pad', padOn ? '1' : '0');
     if (resetPadState) resetPadState();
   }
-  document.querySelectorAll('.tab').forEach(b => {
-    b.addEventListener('click', () => setPage(b.dataset.page));
-  });
-  setPage(localStorage.getItem('kb.page') || 'kb');
+  $('#btnPad').addEventListener('click', () => { padOn = !padOn; applyPad(); });
+  applyPad();
 
-  /* ================= 触控板手势 ================= */
+  /* ================= 触控手势（仅单指移动/点击 + 双指上下滚动） ================= */
   const padSurface = $('#padSurface');
-  const padBadge = $('#padBadge');
   const padFingers = $('#padFingers');
   padSurface.addEventListener('contextmenu', e => e.preventDefault());
 
-  let sens = Number(localStorage.getItem('kb.sens') || 1.6);
-  let tapClick = localStorage.getItem('kb.tapClick') !== '0';
-  let sysThree = localStorage.getItem('kb.sysThree') === '1';
-  let padLock = localStorage.getItem('kb.padLock') === '1';
-
-  function syncPadChips(){
-    $('#padSens').textContent = '指针速度 ' + sens.toFixed(1) + '×';
-    $('#padTap').textContent = '轻点单击：' + (tapClick ? '开' : '关');
-    $('#padThree').textContent = padLock ? '三指上下：锁定接管' : '三指上下：' + (sysThree ? '开' : '关');
-    $('#padThree').classList.toggle('off', padLock);
-    $('#padLock').textContent = '锁定模式：' + (padLock ? '开' : '关');
-  }
-  syncPadChips();
-  padSurface.classList.toggle('locked', padLock);
-
-  /* 锁定模式：全屏 + 屏幕常亮，手势全部由 App 解释并发给电脑，
-     三指/四指不再依赖系统手势开关，减少两边互相抢 */
+  const SENS = 1.6;
   let wakeLock = null;
-
-  /* APK 原生壳：锁定期间屏蔽左右边缘手势（网页层做不到的部分） */
-  function nativeLock(on){
-    const C = window.Capacitor;
-    const plugin = C && C.Plugins && C.Plugins.GestureGuard;
-    if (plugin && typeof plugin.setLock === 'function'){
-      try{ Promise.resolve(plugin.setLock({ on: !!on })).catch(() => {}); return; }catch(e){}
-    }
-    const g = window.NativeGestureGuard;
-    if (g && typeof g.setLock === 'function'){
-      try{ g.setLock(!!on); }catch(e){}
-    }
-  }
-  nativeLock(padLock);
-
-  async function applyPadLock(){
-    localStorage.setItem('kb.padLock', padLock ? '1' : '0');
-    nativeLock(padLock);
-    padSurface.classList.toggle('locked', padLock);
-    syncPadChips();
-    if (padLock){
-      try{ if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); }catch(e){}
-      try{ wakeLock = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; }catch(e){ wakeLock = null; }
-      toast('锁定模式：手势只作用于电脑');
-    } else {
-      try{ if (document.fullscreenElement) await document.exitFullscreen(); }catch(e){}
-      try{ if (wakeLock) await wakeLock.release(); }catch(e){}
-      wakeLock = null;
-      if (wantFull) acquireWake();   // 全屏锁定仍需要常亮
-      toast('锁定模式已关闭');
-    }
-    haptic();
-  }
-
-  $('#padLock').addEventListener('click', () => {
-    padLock = !padLock;
-    applyPadLock();
-  });
 
   /* ================= 全屏锁定（键盘页常驻使用） ================= */
   const FULL_KEY = 'kb.fullscreen';
@@ -1279,7 +1177,7 @@
     try{ if (document.fullscreenElement) await document.exitFullscreen(); }catch(e){}
     try{ if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); }catch(e){}
     nativeFullscreen(false);
-    if (!padLock) releaseWake();
+    releaseWake();
     paintFull();
   }
 
@@ -1300,7 +1198,7 @@
       wantFull = false;
       localStorage.setItem(FULL_KEY, '0');
       nativeFullscreen(false);
-      if (!padLock) releaseWake();
+      releaseWake();
     }
     paintFull();
   });
@@ -1312,26 +1210,6 @@
 
   paintFull();
 
-  $('#padSens').addEventListener('click', () => {
-    const opts = [1.0, 1.6, 2.2, 3.0];
-    let i = opts.indexOf(sens);
-    sens = opts[(i < 0 ? 0 : i + 1) % opts.length];
-    localStorage.setItem('kb.sens', String(sens));
-    syncPadChips();
-  });
-  $('#padTap').addEventListener('click', () => {
-    tapClick = !tapClick;
-    localStorage.setItem('kb.tapClick', tapClick ? '1' : '0');
-    syncPadChips();
-  });
-  $('#padThree').addEventListener('click', () => {
-    if (padLock){ toast('锁定模式下三指手势已归 App'); return; }
-    sysThree = !sysThree;
-    localStorage.setItem('kb.sysThree', sysThree ? '1' : '0');
-    syncPadChips();
-    toast(sysThree ? '三指上下已开启，可能同时触发系统截屏' : '三指上下已关闭');
-  });
-
   function padSend(obj){
     fetch(st.base + '/mouse', {
       method:'POST',
@@ -1341,8 +1219,8 @@
     }).then(r => {
       if (!r.ok) throw new Error(r.status);
     }).catch(() => {
-      // 移动丢帧无所谓；点击/手势丢了要让用户知道
-      if (obj.type === 'click' || obj.type === 'gesture') toast('未连接，手势未发送');
+      // 移动丢帧无所谓；点击丢了要让用户知道
+      if (obj.type === 'click') toast('未连接，手势未发送');
     });
   }
 
@@ -1359,22 +1237,10 @@
     });
   }
 
-  let badgeTimer = 0;
-  const GESTURE_LABEL = {
-    taskview:'任务视图', desktop:'显示桌面', switch:'切换窗口',
-    vleft:'上一虚拟桌面', vright:'下一虚拟桌面',
-  };
-  function badge(text){
-    padBadge.textContent = text;
-    padBadge.classList.add('show');
-    clearTimeout(badgeTimer);
-    badgeTimer = setTimeout(() => padBadge.classList.remove('show'), 900);
-  }
-
   const pts = new Map();
-  let startT = 0, startC = null, lastC = null, maxF = 0, moved = 0, scrolled = false;
+  let startT = 0, lastC = null, maxF = 0, moved = 0, scrolled = false;
 
-  /* 切页/重连时清空残留的指头状态，避免按错指头数 */
+  /* 收起/重连时清空残留的指头状态，避免按错指头数 */
   resetPadState = () => {
     pts.clear();
     drawFingers(0);
@@ -1388,7 +1254,7 @@
     return {x: x / n, y: y / n};
   }
   function drawFingers(n){
-    const count = Math.min(n, 4);
+    const count = Math.min(n, 2);
     if (padFingers.childElementCount !== count){
       padFingers.innerHTML = '<i></i>'.repeat(count);
     }
@@ -1401,8 +1267,7 @@
     pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
     if (pts.size === 1){
       startT = performance.now();
-      startC = centroid();
-      lastC = startC;
+      lastC = centroid();
       maxF = 1; moved = 0; scrolled = false;
     }
     if (pts.size === 2){
@@ -1421,8 +1286,8 @@
     const c = centroid();
 
     if (n === 1){
-      const dx = (c.x - lastC.x) * sens;
-      const dy = (c.y - lastC.y) * sens;
+      const dx = (c.x - lastC.x) * SENS;
+      const dy = (c.y - lastC.y) * SENS;
       moved += Math.abs(dx) + Math.abs(dy);
       padMove(dx, dy);
       lastC = c;
@@ -1430,9 +1295,8 @@
     }
 
     if (n === 2){
-      /* 双指只做上下滚动：忽略横向位移与两指间距变化（不做缩放），
-         避免和系统缩放、平板自身的多指手势互相干扰 */
-      const dy = (c.y - lastC.y) * sens * 0.55;
+      /* 双指只做上下滚动：忽略横向位移与两指间距变化（不做缩放） */
+      const dy = (c.y - lastC.y) * SENS * 0.55;
       if (Math.abs(dy) > 0.5){
         padSend({type:'scroll', dy: Math.round(dy)});
         scrolled = true;
@@ -1441,7 +1305,6 @@
       return;
     }
 
-    // 三指及以上：只记录轨迹，抬起时判定
     lastC = c;
   });
 
@@ -1451,43 +1314,13 @@
     drawFingers(pts.size);
 
     // 手指数量变化后重建基准，否则会用旧的 lastC 算出巨大跳变
-    if (pts.size === 2){
+    if (pts.size > 0){
       lastC = centroid();
       return;
     }
-    if (pts.size === 1){ lastC = centroid(); return; }
-    if (pts.size > 2) return;
 
     const dt = performance.now() - startT;
-    const endC = lastC || startC;
-    const dx = endC.x - startC.x;
-    const dy = endC.y - startC.y;
-
-    if (maxF >= 3){
-      const TH = 70;
-      const vertical = Math.abs(dy) >= Math.abs(dx);
-      let name = '';
-
-      if (maxF >= 4){
-        // 四指：安卓/MIUI 没有默认四指手势，不会和系统抢
-        if (vertical && Math.abs(dy) > TH) name = dy < 0 ? 'taskview' : 'desktop';
-        else if (!vertical && Math.abs(dx) > TH) name = 'switch';
-      } else if (!vertical && Math.abs(dx) > TH){
-        // 三指左右：系统未占用
-        name = dx < 0 ? 'vleft' : 'vright';
-      } else if (vertical && (sysThree || padLock) && Math.abs(dy) > TH){
-        // 三指上下：默认关闭（MIUI 会同时截屏/分屏）；锁定模式下由 App 接管
-        name = dy < 0 ? 'taskview' : 'desktop';
-      }
-      if (name){
-        padSend({type:'gesture', name});
-        badge(maxF + ' 指 · ' + (GESTURE_LABEL[name] || name));
-        haptic();
-      }
-      return;
-    }
-
-    if (tapClick && dt < 320 && moved < 12 && !scrolled){
+    if (dt < 320 && moved < 12 && !scrolled){
       padSend({type:'click', button: maxF === 2 ? 'right' : 'left'});
       haptic();
     }
