@@ -386,7 +386,8 @@
   const st = {
     mods: {ctrl:false, alt:false, shift:false, win:false},
     locked: {ctrl:false, alt:false, shift:false, win:false},
-    caps: false,
+    caps: false,        // 单击 Caps = 一次性大写（打完一个字母就失效）
+    capsLock: false,    // 双击 Caps = 持续大写，按键标红
     fnRow: localStorage.getItem('kb.fnRow') === '1',
     base: (localStorage.getItem('kb.base') || location.origin).replace(/\/+$/, ''),
     online: false,
@@ -486,9 +487,13 @@
   function paintState(){
     document.querySelectorAll('.key[data-toggle]').forEach(el => {
       const t = el.dataset.toggle;
-      const on = t === 'caps' ? st.caps : st.mods[t];
-      el.classList.toggle('on', !!on);
-      el.classList.toggle('locked', t !== 'caps' && !!st.locked[t]);
+      if (t === 'caps'){
+        el.classList.toggle('on', st.caps || st.capsLock);
+        el.classList.toggle('locked', st.capsLock);
+        return;
+      }
+      el.classList.toggle('on', !!st.mods[t]);
+      el.classList.toggle('locked', !!st.locked[t]);
     });
     paintIme();
     renderHeld();
@@ -517,6 +522,7 @@
   const HOLD_MS = 380;
   let modTimer = 0, modTarget = '', pressT0 = 0, modPointerId = null;
   let lastTapName = '', lastTapT = 0;
+  let lastCapsTap = 0;
   const lockedAt = {};
 
   function setLocked(name, on, silent){
@@ -579,13 +585,14 @@
     let key = spec.id;
     let mods = activeMods();
     const isLetter = /^[a-z]$/.test(key);
+    const capsOn = st.caps || st.capsLock;
     const shiftHeld = st.locked.shift;   // 物理按住时由系统产生大写/符号，代码不再叠加
 
     if (!shiftHeld){
-      if ((st.mods.shift || (st.caps && isLetter)) && spec.shift){
+      if ((st.mods.shift || (capsOn && isLetter)) && spec.shift){
         key = spec.shift;
         mods = mods.filter(m => m !== 'shift');
-      } else if (isLetter && (st.mods.shift || st.caps) && !mods.includes('shift')){
+      } else if (isLetter && (st.mods.shift || capsOn) && !mods.includes('shift')){
         mods.push('shift');
       }
     }
@@ -598,6 +605,11 @@
   function send(spec){
     const cmd = buildCmd(spec);
     post(cmd);
+    // 一次性大写：打完一个字母就撤销；双击锁定的大写不受影响
+    if (st.caps && /^[a-z]$/.test(spec.id)){
+      st.caps = false;
+      paintState();
+    }
     toast((spec.label || spec.id) + '  ' + (cmd.combo ? cmd.combo : ''));
   }
 
@@ -644,7 +656,25 @@
     haptic();
 
     if (toggle){
-      if (toggle === 'caps'){ st.caps = !st.caps; paintState(); return; }
+      if (toggle === 'caps'){
+        // 单击 = 下一个字母大写；双击 = 持续大写（标红）；再点 = 取消
+        const now = performance.now();
+        const dbl = now - lastCapsTap < 340;
+        lastCapsTap = now;
+        if (st.capsLock){
+          st.capsLock = false;
+          st.caps = false;
+          toast('大写已取消');
+        } else if (dbl){
+          st.capsLock = true;
+          st.caps = false;
+          toast('大写锁定');
+        } else {
+          st.caps = !st.caps;
+        }
+        paintState();
+        return;
+      }
       if (st.locked[toggle]){ setLocked(toggle, false); return; }
 
       // 按住 380ms → 锁定；松手则按一次性修饰键处理
