@@ -17,13 +17,21 @@
 import argparse
 import ctypes
 import json
+import mimetypes
+import os
 import queue
+import socket
 import sys
 import threading
 import time
 from ctypes import wintypes
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+
+STATIC_ROOT = os.path.dirname(os.path.abspath(__file__))
+STATIC_FILES = {
+    '/index.html', '/manifest.webmanifest', '/sw.js',
+}
 
 # ---------------------------------------------------------------------------
 # 0. 类型定义（SendInput 需要的 ctypes 结构体）
@@ -280,7 +288,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
     # ---- GET ----
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ('/', '/ping', '/health'):
+
+        # 状态探针
+        if path in ('/ping', '/health'):
             body = json.dumps({
                 'ok': True,
                 'service': 'keyboard-bridge',
@@ -294,7 +304,32 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        self.send_response(404); self._cors(); self.send_header('Content-Length','2'); self.end_headers(); self.wfile.write(b'{}')
+
+        # 同源托管网页（彻底避开 https→http 混合内容拦截）
+        self._serve_static(path)
+
+    def _serve_static(self, path: str):
+        if path == '/':
+            path = '/index.html'
+        safe = os.path.normpath(path).lstrip('\\/').replace('\\', '/')
+        full = os.path.abspath(os.path.join(STATIC_ROOT, safe))
+        if not full.startswith(STATIC_ROOT) or not os.path.isfile(full):
+            self.send_response(404)
+            self.send_header('Content-Length', '2')
+            self.end_headers()
+            self.wfile.write(b'{}')
+            return
+        ctype = mimetypes.guess_type(full)[0] or 'application/octet-stream'
+        if full.endswith('.webmanifest'):
+            ctype = 'application/manifest+json'
+        with open(full, 'rb') as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header('Content-Type', ctype + ('; charset=utf-8' if ctype.startswith(('text/', 'application/javascript', 'application/json', 'application/manifest')) else ''))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     # ---- POST /key ----
     def do_POST(self):
@@ -344,17 +379,27 @@ def main():
 
     server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
 
+    # 取本机局域网 IP
+    lan_ip = '127.0.0.1'
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+
     print()
     print("╔══════════════════════════════════════════════════╗")
-    print("║  平板蓝牙键盘 · 桥接服务 (ctypes SendInput)       ║")
+    print("║  平板触屏键盘 · 桥接服务 (ctypes SendInput)       ║")
     print("╠══════════════════════════════════════════════════╣")
-    print(f"║  HTTP:  http://localhost:{args.port}/ping              ║")
-    print(f"║  API:   POST /key  (JSON)                          ║")
-    print(f"║  队列:  queue.Queue(maxsize=256)                   ║")
-    print(f"║  线程:  ThreadingHTTPServer + 1 consumer            ║")
+    print(f"║  平板打开:  http://{lan_ip}:{args.port}/".ljust(52) + "║")
+    print(f"║  状态探针:  http://{lan_ip}:{args.port}/ping".ljust(52) + "║")
+    print(f"║  按键接口:  POST /key  (JSON)".ljust(52) + "║")
     print("╚══════════════════════════════════════════════════╝")
     print()
-    print("  平板侧 → 设置 → 联调桥接 → 启用 → 填: http://<电脑IP>:8888")
+    print("  平板与电脑连同一个 WiFi，浏览器打开上面「平板打开」的地址即可")
+    print("  该网页与桥接服务同源，不会被浏览器拦截")
     print("  按 Ctrl+C 停止")
     print()
 
