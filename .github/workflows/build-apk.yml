@@ -113,3 +113,4 @@ jobs:
             平板蓝牙键盘 Android 安装包（TWA 封装）
             安装后从桌面「蓝牙键盘」图标启动，横屏全屏运行。
           files: android-twa/*.apk
+# trigger 1
