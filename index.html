@@ -110,6 +110,10 @@
     background:var(--accent);color:#fff;border-color:transparent;
     box-shadow:0 0 0 2px var(--accentSoft) inset;
   }
+  .key .ime{
+    position:absolute;left:5px;top:4px;
+    font-size:10px;font-weight:700;line-height:1;letter-spacing:0;
+  }
   .key.pressed{transform:translateY(1.5px) scale(.995);filter:brightness(.95);}
   .key.locked{
     border-color:#E5484D;color:#E5484D;
@@ -435,6 +439,37 @@
     paintState();
   }
 
+  /* Shift 显示当前中/英状态，轻点切换（发送一次 Shift 轻敲，Windows 拼音默认即此键） */
+  const IME_KEY = 'kb.ime';
+  let ime = localStorage.getItem(IME_KEY) === 'en' ? 'en' : 'zh';
+
+  function paintIme(){
+    document.querySelectorAll('.key[data-toggle="shift"]').forEach(el => {
+      let b = el.querySelector('.ime');
+      if (!b){
+        b = document.createElement('span');
+        b.className = 'ime';
+        el.appendChild(b);
+      }
+      b.textContent = ime === 'zh' ? '中' : '英';
+      b.style.color = ime === 'zh' ? '#E5484D' : '#2B8FFF';
+    });
+  }
+
+  function toggleIme(){
+    ime = ime === 'zh' ? 'en' : 'zh';
+    localStorage.setItem(IME_KEY, ime);
+    fetch(st.base + '/key', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({key:'shift', mods:[], combo:null, label:'中/英切换'}),
+      keepalive: true,
+    }).catch(() => {});
+    paintIme();
+    toast(ime === 'zh' ? '输入法：中文' : '输入法：英文');
+    haptic();
+  }
+
   function paintState(){
     document.querySelectorAll('.key[data-toggle]').forEach(el => {
       const t = el.dataset.toggle;
@@ -442,6 +477,7 @@
       el.classList.toggle('on', !!on);
       el.classList.toggle('locked', t !== 'caps' && !!st.locked[t]);
     });
+    paintIme();
     renderHeld();
     $('#btnFn').style.color = st.fnRow ? 'var(--accent)' : '';
     $('#btnFn').style.borderColor = st.fnRow ? 'var(--accent)' : '';
@@ -630,6 +666,13 @@
     const name = modTarget;
     modTarget = ''; modEl = null;
     if (name){
+      // Shift 轻点 = 中/英切换（组合键请长按锁定 Shift，或改用 Caps）
+      if (name === 'shift'){
+        lastTapName = ''; lastTapT = 0;
+        modTarget = '';
+        toggleIme();
+        return;
+      }
       const now = performance.now();
       // 双击也可锁定（长按被系统打断时的兜底）
       if (lastTapName === name && now - lastTapT < 320){
