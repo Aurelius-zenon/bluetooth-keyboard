@@ -526,6 +526,123 @@ def send_command(command: dict):
 
 
 # ---------------------------------------------------------------------------
+# 3.5 鼠标 / 触控板手势
+# ---------------------------------------------------------------------------
+MOUSEEVENTF_MOVE       = 0x0001
+MOUSEEVENTF_LEFTDOWN   = 0x0002
+MOUSEEVENTF_LEFTUP     = 0x0004
+MOUSEEVENTF_RIGHTDOWN  = 0x0008
+MOUSEEVENTF_RIGHTUP    = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP   = 0x0040
+MOUSEEVENTF_WHEEL      = 0x0800
+MOUSEEVENTF_HWHEEL     = 0x01000
+
+_mouse_queue: queue.Queue = queue.Queue(maxsize=2048)
+
+# 手势 → 按键组合（与笔记本触控板默认手势一致）
+GESTURE_CMDS = {
+    'taskview': {'key': 'tab',   'mods': ['win'],        'combo': 'win+tab',        'label': '任务视图'},
+    'desktop':  {'key': 'd',     'mods': ['win'],        'combo': 'win+d',          'label': '显示桌面'},
+    'switch':   {'key': 'tab',   'mods': ['alt'],        'combo': 'alt+tab',        'label': '切换窗口'},
+    'vleft':    {'key': 'left',  'mods': ['ctrl', 'win'], 'combo': 'ctrl+win+left',  'label': '上一虚拟桌面'},
+    'vright':   {'key': 'right', 'mods': ['ctrl', 'win'], 'combo': 'ctrl+win+right', 'label': '下一虚拟桌面'},
+}
+
+
+def _mouse_event(flags: int, dx: int = 0, dy: int = 0, data: int = 0):
+    try:
+        _user32.mouse_event(flags, int(dx), int(dy), int(data), 0)
+    except Exception:
+        pass
+
+
+def _apply_mouse(item: dict):
+    kind = item.get('type')
+
+    if kind == 'click':
+        btn = item.get('button', 'left')
+        down, up = {
+            'left':   (MOUSEEVENTF_LEFTDOWN,   MOUSEEVENTF_LEFTUP),
+            'right':  (MOUSEEVENTF_RIGHTDOWN,  MOUSEEVENTF_RIGHTUP),
+            'middle': (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        }.get(btn, (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP))
+        count = 2 if item.get('double') else 1
+        for _ in range(count):
+            _mouse_event(down)
+            time.sleep(0.008)
+            _mouse_event(up)
+            if count > 1:
+                time.sleep(0.04)
+
+    elif kind == 'scroll':
+        dy = int(item.get('dy') or 0)
+        dx = int(item.get('dx') or 0)
+        if dy:
+            _mouse_event(MOUSEEVENTF_WHEEL, 0, 0, dy)
+        if dx:
+            _mouse_event(MOUSEEVENTF_HWHEEL, 0, 0, dx)
+
+    elif kind == 'zoom':
+        # 捏合缩放 = Ctrl + 滚轮
+        dy = int(item.get('dy') or 0)
+        if dy:
+            send_vk(VK_CODE['ctrl'], False)
+            time.sleep(0.008)
+            _mouse_event(MOUSEEVENTF_WHEEL, 0, 0, dy)
+            time.sleep(0.008)
+            send_vk(VK_CODE['ctrl'], True)
+
+    elif kind == 'gesture':
+        cmd = GESTURE_CMDS.get(item.get('name') or '')
+        if cmd:
+            if _target_hwnd:
+                focus_target()
+                time.sleep(0.02)
+            send_command(dict(cmd))
+            _stats['last_key'] = cmd['key']
+            _stats['last_combo'] = cmd['combo']
+            _stats['last_fg'] = _foreground_title()
+            _stats['last_ok'] = True
+            _stats['last_ts'] = time.time()
+            print(f"  [bridge] 🖐 {cmd['label']}")
+
+
+def _mouse_loop():
+    """单线程消费鼠标事件；连续 move 合并成一次，避免刷爆系统调用"""
+    while True:
+        item = _mouse_queue.get()
+        if item.get('type') == 'move':
+            dx = int(item.get('dx') or 0)
+            dy = int(item.get('dy') or 0)
+            drained = 0
+            while drained < 8:
+                try:
+                    nxt = _mouse_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if nxt.get('type') == 'move':
+                    dx += int(nxt.get('dx') or 0)
+                    dy += int(nxt.get('dy') or 0)
+                    drained += 1
+                else:
+                    if dx or dy:
+                        _mouse_event(MOUSEEVENTF_MOVE, dx, dy)
+                        dx = dy = 0
+                    try:
+                        _apply_mouse(nxt)
+                    except Exception:
+                        pass
+            if dx or dy:
+                _mouse_event(MOUSEEVENTF_MOVE, dx, dy)
+        else:
+            try:
+                _apply_mouse(item)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # 4. 生产者-消费者队列
 # ---------------------------------------------------------------------------
 
@@ -697,6 +814,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_response(200); self._cors(); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
             return
 
+        # 鼠标 / 触控板手势
+        if path == '/mouse':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
+                data = json.loads(raw or '{}')
+                _mouse_queue.put_nowait(data)
+                body = json.dumps({'ok': True, 'queued': True}).encode()
+                self.send_response(202)
+            except queue.Full:
+                body = json.dumps({'ok': False, 'error': 'mouse queue full'}).encode()
+                self.send_response(503)
+            except Exception as e:
+                body = json.dumps({'ok': False, 'error': str(e)}).encode()
+                self.send_response(400)
+            self._cors()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if path != '/key':
             self.send_response(404); self._cors(); self.send_header('Content-Length','2'); self.end_headers(); self.wfile.write(b'{}')
             return
@@ -776,6 +914,9 @@ def main():
     # 启动消费者线程（守护）
     consumer = threading.Thread(target=_consumer_loop, name='sendinput-consumer', daemon=True)
     consumer.start()
+
+    mouse = threading.Thread(target=_mouse_loop, name='mouse-consumer', daemon=True)
+    mouse.start()
 
     try:
         server = BridgeServer((args.host, args.port), BridgeHandler)
