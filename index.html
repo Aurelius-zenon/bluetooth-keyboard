@@ -256,6 +256,7 @@
   </div>
   <button class="iconbtn" id="btnFn">Fn</button>
   <button class="iconbtn" id="btnTheme">主题</button>
+  <button class="iconbtn" id="btnFull">全屏</button>
   <button class="iconbtn" id="btnSet">设置</button>
 </header>
 
@@ -1225,6 +1226,7 @@
       try{ if (document.fullscreenElement) await document.exitFullscreen(); }catch(e){}
       try{ if (wakeLock) await wakeLock.release(); }catch(e){}
       wakeLock = null;
+      if (wantFull) acquireWake();   // 全屏锁定仍需要常亮
       toast('锁定模式已关闭');
     }
     haptic();
@@ -1234,6 +1236,78 @@
     padLock = !padLock;
     applyPadLock();
   });
+
+  /* ================= 全屏锁定（键盘页常驻使用） ================= */
+  const FULL_KEY = 'kb.fullscreen';
+  let wantFull = localStorage.getItem(FULL_KEY) === '1';
+
+  function nativeFullscreen(on){
+    const C = window.Capacitor;
+    const plugin = C && C.Plugins && C.Plugins.GestureGuard;
+    if (!plugin || typeof plugin.setFullscreen !== 'function') return;
+    try{ Promise.resolve(plugin.setFullscreen({ on: !!on })).catch(() => {}); }catch(e){}
+  }
+
+  function paintFull(){
+    $('#btnFull').textContent = (document.fullscreenElement || wantFull) ? '退出' : '全屏';
+  }
+
+  async function acquireWake(){
+    if (!navigator.wakeLock || wakeLock) return;
+    try{ wakeLock = await navigator.wakeLock.request('screen'); }catch(e){ wakeLock = null; }
+  }
+  async function releaseWake(){
+    if (!wakeLock) return;
+    try{ await wakeLock.release(); }catch(e){}
+    wakeLock = null;
+  }
+
+  async function enterFull(){
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen){
+      try{ await el.requestFullscreen({ navigationUI: 'hide' }); }catch(e){}
+    }
+    try{
+      if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+    }catch(e){}
+    acquireWake();
+    nativeFullscreen(true);
+    paintFull();
+  }
+
+  async function exitFull(){
+    try{ if (document.fullscreenElement) await document.exitFullscreen(); }catch(e){}
+    try{ if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); }catch(e){}
+    nativeFullscreen(false);
+    if (!padLock) releaseWake();
+    paintFull();
+  }
+
+  $('#btnFull').addEventListener('click', async () => {
+    wantFull = !wantFull;
+    localStorage.setItem(FULL_KEY, wantFull ? '1' : '0');
+    if (wantFull) await enterFull(); else await exitFull();
+    haptic();
+    toast(wantFull ? '全屏锁定已开启' : '全屏锁定已关闭');
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    // 用系统返回键等方式退出全屏时，同步状态，避免按钮还显示“退出”
+    if (!document.fullscreenElement && wantFull){
+      wantFull = false;
+      localStorage.setItem(FULL_KEY, '0');
+      nativeFullscreen(false);
+      if (!padLock) releaseWake();
+    }
+    paintFull();
+  });
+
+  // 浏览器要求全屏由用户手势触发：已开启过就等第一次触摸补上
+  document.addEventListener('pointerdown', () => {
+    if (wantFull && !document.fullscreenElement) enterFull();
+  }, { once: true });
+
+  paintFull();
 
   $('#padSens').addEventListener('click', () => {
     const opts = [1.0, 1.6, 2.2, 3.0];

@@ -48,6 +48,14 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    /** 键盘页全屏锁定：只切换系统栏，不影响手势屏蔽 */
+    public void setFullscreen(final boolean on) {
+        runOnUiThread(() -> {
+            if (on || gestureLock) applyImmersive();
+            else showSystemBars();
+        });
+    }
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);

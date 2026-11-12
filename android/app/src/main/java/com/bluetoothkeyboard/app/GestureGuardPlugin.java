@@ -21,4 +21,14 @@ public class GestureGuardPlugin extends Plugin {
         ret.put("on", on);
         call.resolve(ret);
     }
+
+    @PluginMethod
+    public void setFullscreen(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        MainActivity activity = (MainActivity) getActivity();
+        if (activity != null) activity.setFullscreen(on);
+        JSObject ret = new JSObject();
+        ret.put("on", on);
+        call.resolve(ret);
+    }
 }
