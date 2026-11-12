@@ -29,6 +29,7 @@ jobs:
         run: |
           mkdir -p dist
           cp index.html manifest.webmanifest sw.js dist/
+          cp -r icons dist/icons
           touch dist/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3
