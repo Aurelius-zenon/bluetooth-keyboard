@@ -13,9 +13,6 @@ on:
       - 'package-lock.json'
       - '.github/workflows/android.yml'
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,37 +28,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Build APK
-        id: build
-        continue-on-error: true
+      # ubuntu-latest 已预装 Android SDK，直接接受许可即可，不用 setup-android
+      - name: Accept Android SDK licenses
         run: |
-          {
-            npm ci
-            npm run sync
-            cd android
-            chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace
-          } > build.log 2>&1
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          echo "sdk: $ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
 
-      - name: Upload APK
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
+      - name: Install deps and sync web assets
+        run: |
+          npm ci
+          npm run sync
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
         with:
           name: touch-keyboard-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      # 失败时把日志提交回仓库，便于在无 token 的情况下排查
-      - name: Publish build log on failure
-        if: steps.build.outcome == 'failure'
-        run: |
-          tail -c 60000 build.log > .ci-build.log || true
-          git config user.name 'ci-bot'
-          git config user.email 'ci-bot@local'
-          git add -f .ci-build.log
-          git commit -m "ci: 构建失败日志 [skip ci]" || true
-          git push || true
-          exit 1
