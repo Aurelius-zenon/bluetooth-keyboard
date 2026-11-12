@@ -366,11 +366,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
 # 6. 入口
 # ---------------------------------------------------------------------------
 
+def _minimize_console():
+    """把当前控制台最小化，避免它占用前台焦点（SendInput 只发给前台窗口）"""
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def main():
-    parser = argparse.ArgumentParser(description='高性能平板蓝牙键盘桥接')
+    parser = argparse.ArgumentParser(description='高性能平板触屏键盘桥接')
     parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8888)
     parser.add_argument('--bench', action='store_true', help='启动后自动跑 benchmark 测试')
+    parser.add_argument('--keep-window', action='store_true', help='不自动最小化控制台')
     args = parser.parse_args()
 
     # 启动消费者线程（守护）
@@ -400,11 +413,23 @@ def main():
     print()
     print("  平板与电脑连同一个 WiFi，浏览器打开上面「平板打开」的地址即可")
     print("  该网页与桥接服务同源，不会被浏览器拦截")
-    print("  按 Ctrl+C 停止")
+    print()
+    print("  ★ 按键只会送入【当前前台窗口】")
+    print("    先用鼠标点一下目标程序（记事本 / 浏览器输入框等），再按平板键盘")
+    print("    切换窗口：平板上按 Alt → Tab")
+    print("    要往管理员权限的程序输入：请以管理员身份运行本脚本")
     print()
 
     if args.bench:
         _run_benchmark()
+
+    if not args.keep_window:
+        time.sleep(1.0)
+        if _minimize_console():
+            print("  [i] 控制台已自动最小化，按键会被送到前台程序")
+            print("      想常驻窗口：python bridge.py --keep-window")
+        else:
+            print("  [i] 未能自动最小化，请手动点一下目标窗口")
 
     try:
         server.serve_forever()
