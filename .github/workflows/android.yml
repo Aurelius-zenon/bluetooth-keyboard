@@ -13,6 +13,9 @@ on:
       - 'package-lock.json'
       - '.github/workflows/android.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -38,13 +41,33 @@ jobs:
           npx cap sync android
 
       - name: Build debug APK
+        id: build
+        continue-on-error: true
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace --warning-mode all > ../build.log 2>&1
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
         with:
           name: touch-keyboard-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # 失败时把日志提交回仓库，便于在无 token 的情况下排查
+      - name: Publish build log on failure
+        if: steps.build.outcome == 'failure'
+        run: |
+          tail -c 60000 build.log > .ci-build.log || true
+          git config user.name 'ci-bot'
+          git config user.email 'ci-bot@local'
+          git add -f .ci-build.log
+          git commit -m "ci: 构建失败日志 [skip ci]" || true
+          git push || true
+          exit 1
+
+      - name: Fail job if build failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1
