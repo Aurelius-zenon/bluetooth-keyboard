@@ -23,6 +23,8 @@ package-lock.json
 android-twa/app/
 android-twa/build/
 android-twa/.gradle/
+android-twa/android.keystore
+android.keystore
 
 # IDE
 .vscode/
