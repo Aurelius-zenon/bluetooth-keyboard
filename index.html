@@ -110,6 +110,20 @@
     box-shadow:0 0 0 2px var(--accentSoft) inset;
   }
   .key.pressed{transform:translateY(1.5px) scale(.995);filter:brightness(.95);}
+  .key.locked{
+    border-color:var(--accent);color:var(--accent);
+    box-shadow:0 0 0 2px var(--accentSoft) inset, inset 0 -3px 0 var(--accent);
+    background:var(--accentSoft);
+  }
+  .key.locked::after{
+    content:'';position:absolute;top:6px;right:6px;
+    width:6px;height:6px;border-radius:50%;background:var(--accent);
+  }
+  #held{display:flex;gap:4px;align-items:center;flex:0 0 auto;}
+  #held span{
+    font-size:11px;font-weight:600;color:var(--accent);background:var(--accentSoft);
+    border-radius:10px;padding:3px 8px;line-height:1.2;
+  }
   .key .sub{
     position:absolute;top:3px;left:6px;
     font-size:calc(var(--fs-fn) * .82);font-weight:400;color:var(--textFn);opacity:.75;
@@ -226,6 +240,7 @@
     <span id="st">检测桥接…</span>
   </div>
   <div class="spacer"></div>
+  <div id="held"></div>
   <div class="tabs">
     <button class="tab on" data-page="kb">键盘</button>
     <button class="tab" data-page="pad">手势</button>
@@ -360,6 +375,7 @@
   /* ================= 状态 ================= */
   const st = {
     mods: {ctrl:false, alt:false, shift:false, win:false},
+    locked: {ctrl:false, alt:false, shift:false, win:false},
     caps: false,
     fnRow: localStorage.getItem('kb.fnRow') === '1',
     base: (localStorage.getItem('kb.base') || location.origin).replace(/\/+$/, ''),
@@ -422,26 +438,93 @@
       const t = el.dataset.toggle;
       const on = t === 'caps' ? st.caps : st.mods[t];
       el.classList.toggle('on', !!on);
+      el.classList.toggle('locked', t !== 'caps' && !!st.locked[t]);
     });
+    renderHeld();
     $('#btnFn').style.color = st.fnRow ? 'var(--accent)' : '';
     $('#btnFn').style.borderColor = st.fnRow ? 'var(--accent)' : '';
   }
 
+  /* 顶栏显示已锁定的修饰键，点一下即可释放 */
+  function renderHeld(){
+    const box = $('#held');
+    if (!box) return;
+    const names = Object.keys(st.locked).filter(m => st.locked[m]);
+    if (box.dataset.state === names.join(',')) return;
+    box.dataset.state = names.join(',');
+    box.innerHTML = '';
+    names.forEach(n => {
+      const s = document.createElement('span');
+      s.textContent = n.toUpperCase();
+      s.title = '点击释放';
+      s.addEventListener('click', () => setLocked(n, false));
+      box.appendChild(s);
+    });
+  }
+
+  /* ================= 长按锁定 ================= */
+  const HOLD_MS = 380;
+  let modTimer = 0, modTarget = '', modEl = null;
+
+  function setLocked(name, on){
+    st.locked[name] = on;
+    st.mods[name] = false;
+    holdKey(name, on);
+    paintState();
+    toast(name.toUpperCase() + (on ? ' 已锁定 · 再点释放' : ' 已释放'));
+    haptic();
+  }
+
+  function holdKey(name, down){
+    fetch(st.base + '/hold', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(down ? {down:[name]} : {up:[name]}),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  /* 长按普通键连发（退格、方向键等） */
+  const REPEATABLE = new Set(['backspace','delete','left','right','up','down','enter','tab']);
+  let repDelay = 0, repTimer = 0, repSpec = null;
+
+  function startRepeat(spec){
+    if (!REPEATABLE.has(spec.id)) return;
+    stopRepeat();
+    repSpec = spec;
+    repDelay = setTimeout(() => {
+      repTimer = setInterval(() => {
+        if (!repSpec) return;
+        send(repSpec);
+        haptic();
+      }, 55);
+    }, 420);
+  }
+
+  function stopRepeat(){
+    clearTimeout(repDelay);
+    clearInterval(repTimer);
+    repDelay = 0; repTimer = 0; repSpec = null;
+  }
+
   /* ================= 发送 ================= */
   function activeMods(){
-    return Object.keys(st.mods).filter(m => st.mods[m]);
+    return Object.keys(st.mods).filter(m => st.mods[m] && !st.locked[m]);
   }
 
   function buildCmd(spec){
     let key = spec.id;
     let mods = activeMods();
     const isLetter = /^[a-z]$/.test(key);
+    const shiftHeld = st.locked.shift;   // 物理按住时由系统产生大写/符号，代码不再叠加
 
-    if ((st.mods.shift || (st.caps && isLetter)) && spec.shift){
-      key = spec.shift;
-      mods = mods.filter(m => m !== 'shift');
-    } else if (isLetter && (st.mods.shift || st.caps) && !mods.includes('shift')){
-      mods.push('shift');
+    if (!shiftHeld){
+      if ((st.mods.shift || (st.caps && isLetter)) && spec.shift){
+        key = spec.shift;
+        mods = mods.filter(m => m !== 'shift');
+      } else if (isLetter && (st.mods.shift || st.caps) && !mods.includes('shift')){
+        mods.push('shift');
+      }
     }
 
     const combo = mods.length ? mods.join('+') + '+' + key : null;
@@ -487,9 +570,19 @@
     haptic();
 
     if (toggle){
-      if (toggle === 'caps') st.caps = !st.caps;
-      else st.mods[toggle] = !st.mods[toggle];
-      paintState();
+      if (toggle === 'caps'){ st.caps = !st.caps; paintState(); return; }
+      if (st.locked[toggle]){ setLocked(toggle, false); return; }
+
+      // 按住 380ms → 锁定；松手则按一次性修饰键处理
+      clearTimeout(modTimer);
+      modTarget = toggle;
+      modEl = el;
+      modTimer = setTimeout(() => {
+        modTimer = 0;
+        const name = modTarget;
+        modTarget = ''; modEl = null;
+        if (name) setLocked(name, true);
+      }, HOLD_MS);
       return;
     }
 
@@ -503,14 +596,43 @@
     if (!spec) return;
 
     send(spec);
+    startRepeat(spec);
 
-    // 单击后清除一次性修饰键（保留 Caps）
+    // 单击后清除一次性修饰键（保留 Caps 与已锁定的）
     const hadMods = Object.values(st.mods).some(Boolean);
     if (hadMods){
       Object.keys(st.mods).forEach(m => st.mods[m] = false);
       paintState();
     }
   }, {passive:false});
+
+  /* 松手：结束连发；修饰键未达长按阈值则按"一次性"切换 */
+  function endKeyPress(){
+    stopRepeat();
+    if (!modTimer) return;
+    clearTimeout(modTimer);
+    modTimer = 0;
+    const name = modTarget;
+    modTarget = ''; modEl = null;
+    if (name){
+      st.mods[name] = !st.mods[name];
+      paintState();
+      haptic();
+    }
+  }
+  kb.addEventListener('pointerup', endKeyPress);
+  kb.addEventListener('pointercancel', endKeyPress);
+  window.addEventListener('pointerup', endKeyPress);
+
+  /* 离开页面时松开所有锁定键，避免 Ctrl 卡在按下状态 */
+  window.addEventListener('pagehide', () => {
+    const names = Object.keys(st.locked).filter(m => st.locked[m]);
+    if (!names.length) return;
+    try{
+      navigator.sendBeacon(st.base + '/hold',
+        new Blob([JSON.stringify({up: names})], {type:'application/json'}));
+    }catch(e){}
+  });
 
   kb.addEventListener('contextmenu', e => e.preventDefault());
 

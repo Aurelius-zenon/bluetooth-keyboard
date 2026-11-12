@@ -584,14 +584,18 @@ def _apply_mouse(item: dict):
             _mouse_event(MOUSEEVENTF_HWHEEL, 0, 0, dx)
 
     elif kind == 'zoom':
-        # 捏合缩放 = Ctrl + 滚轮
+        # 捏合缩放 = Ctrl + 滚轮（若 Ctrl 已被锁定按住则不再重复按）
         dy = int(item.get('dy') or 0)
         if dy:
-            send_vk(VK_CODE['ctrl'], False)
-            time.sleep(0.008)
+            with _held_lock:
+                ctrl_held = VK_CODE['ctrl'] in _held_vks
+            if not ctrl_held:
+                send_vk(VK_CODE['ctrl'], False)
+                time.sleep(0.008)
             _mouse_event(MOUSEEVENTF_WHEEL, 0, 0, dy)
-            time.sleep(0.008)
-            send_vk(VK_CODE['ctrl'], True)
+            if not ctrl_held:
+                time.sleep(0.008)
+                send_vk(VK_CODE['ctrl'], True)
 
     elif kind == 'gesture':
         cmd = GESTURE_CMDS.get(item.get('name') or '')
@@ -643,6 +647,55 @@ def _mouse_loop():
 
 
 # ---------------------------------------------------------------------------
+# 3.6 长按锁定（物理按住修饰键，直到显式释放）
+# ---------------------------------------------------------------------------
+_held_vks = {}          # vk -> name
+_held_lock = threading.Lock()
+_last_activity = time.time()
+
+
+def _hold_keys(down=(), up=()):
+    """按下/释放修饰键并保持，供"锁定"语义使用"""
+    global _last_activity
+    _last_activity = time.time()
+    with _held_lock:
+        for name in up:
+            vk = VK_CODE.get(str(name).lower())
+            if vk and vk in _held_vks:
+                send_vk(vk, is_up=True)
+                _held_vks.pop(vk, None)
+                print(f"  [bridge] ⇧ 释放 {str(name).upper()}")
+        for name in down:
+            vk = VK_CODE.get(str(name).lower())
+            if vk and vk not in _held_vks:
+                send_vk(vk, is_up=False)
+                _held_vks[vk] = str(name).lower()
+                print(f"  [bridge] ⇩ 按住 {str(name).upper()}")
+
+
+def _release_all_held(reason=''):
+    with _held_lock:
+        if not _held_vks:
+            return
+        for vk in list(_held_vks.keys()):
+            send_vk(vk, is_up=True)
+        names = ', '.join(_held_vks.values())
+        _held_vks.clear()
+        print(f"  [bridge] ⇧ 释放全部修饰键 [{names}] {reason}")
+
+
+def _hold_watchdog():
+    """安全阀：20 秒无操作自动松开，避免 Ctrl 一直卡在按下状态"""
+    while True:
+        time.sleep(2)
+        try:
+            if _held_vks and (time.time() - _last_activity) > 20:
+                _release_all_held('(20 秒无操作，自动释放)')
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # 4. 生产者-消费者队列
 # ---------------------------------------------------------------------------
 
@@ -659,9 +712,20 @@ _start_time = time.monotonic()
 
 def _consumer_loop():
     """单消费者线程：串行消费队列，调用 SendInput"""
-    global _last_foreground
+    global _last_foreground, _last_activity
     while True:
         cmd = _command_queue.get()
+
+        # 长按锁定：只按键/释放，不做完整 press
+        if cmd.get('type') == 'hold':
+            try:
+                _hold_keys(cmd.get('down') or [], cmd.get('up') or [])
+            except Exception as e:
+                _stats['failed'] += 1
+                _stats['last_err'] = str(e)
+            continue
+
+        _last_activity = time.time()
         fg = _foreground_title()
         before_fail = _stats['failed']
         try:
@@ -736,6 +800,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 'target': _t,
                 'queue_size': _command_queue.qsize(),
                 'elevated': _stats['elevated'],
+                'held': sorted(_held_vks.values()),
                 'last': {
                     'key': _stats['last_key'],
                     'combo': _stats['last_combo'],
@@ -812,6 +877,30 @@ class BridgeHandler(BaseHTTPRequestHandler):
             title = _hwnd_title(hwnd) if hwnd else ''
             body = json.dumps({'ok': True, 'target': {'hwnd': _target_hwnd, 'title': title}}).encode()
             self.send_response(200); self._cors(); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
+
+        # 长按锁定：物理按住 / 释放修饰键
+        if path == '/hold':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
+                data = json.loads(raw or '{}')
+                down = [str(x).lower() for x in (data.get('down') or [])]
+                up = [str(x).lower() for x in (data.get('up') or [])]
+                if down or up:
+                    _command_queue.put_nowait({'type': 'hold', 'down': down, 'up': up})
+                body = json.dumps({'ok': True, 'down': down, 'up': up}).encode()
+                self.send_response(202)
+            except queue.Full:
+                body = json.dumps({'ok': False, 'error': 'queue full'}).encode()
+                self.send_response(503)
+            except Exception as e:
+                body = json.dumps({'ok': False, 'error': str(e)}).encode()
+                self.send_response(400)
+            self._cors()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         # 鼠标 / 触控板手势
@@ -917,6 +1006,8 @@ def main():
 
     mouse = threading.Thread(target=_mouse_loop, name='mouse-consumer', daemon=True)
     mouse.start()
+
+    threading.Thread(target=_hold_watchdog, name='hold-watchdog', daemon=True).start()
 
     try:
         server = BridgeServer((args.host, args.port), BridgeHandler)
