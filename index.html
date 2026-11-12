@@ -191,9 +191,31 @@
   /* ---------- 触控板 ---------- */
   #pad{
     display:none;flex:.8 1 0;min-height:0;
-    padding:8px 10px 0;
+    flex-direction:column;gap:8px;padding:8px 10px 0;
   }
   #pad.on{display:flex;}
+  .pad-foot{display:flex;gap:8px;justify-content:center;flex:0 0 auto;}
+  .pad-foot .chip{
+    border:1px solid var(--border);background:var(--key);color:var(--textFn);
+    border-radius:12px;padding:5px 10px;font-size:12px;
+  }
+  .pad-foot .chip:active{transform:translateY(1px);}
+
+  /* ---------- 悬浮工具包 ---------- */
+  #tools{
+    position:fixed;right:12px;bottom:calc(52px + env(safe-area-inset-bottom));
+    width:min(330px, 70vw);padding:10px;border-radius:16px;
+    background:var(--panel);border:1px solid var(--border);
+    box-shadow:0 14px 40px rgba(0,0,0,.28);z-index:40;
+  }
+  #tools[hidden]{display:none;}
+  .tools-h{font-size:12px;color:var(--textFn);margin:2px 4px 8px;font-weight:600;}
+  .tools-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+  .tool{
+    height:38px;border-radius:10px;border:1px solid var(--border);
+    background:var(--key);color:var(--text);font-size:13px;font-family:inherit;
+  }
+  .tool:active{transform:translateY(1px);background:var(--accentSoft);color:var(--accent);}
   .pad-surface{
     position:relative;flex:1 1 auto;min-height:0;overflow:hidden;
     border-radius:18px;border:1px solid var(--border);
@@ -236,6 +258,7 @@
   <div id="held"></div>
   <button class="iconbtn" id="btnFn">Fn</button>
   <button class="iconbtn" id="btnPad">手势</button>
+  <button class="iconbtn" id="btnTools">工具</button>
   <button class="iconbtn" id="btnTheme">主题</button>
   <button class="iconbtn" id="btnFull">全屏</button>
   <button class="iconbtn" id="btnSet">设置</button>
@@ -249,6 +272,10 @@
       <div class="pad-hint">
         <b>单指</b> 移动光标 · 轻点=左键 · <b>双指</b> 上下滑动 · 双指点按=右键
       </div>
+    </div>
+    <div class="pad-foot">
+      <span class="chip" id="chipSens1">单指 3.2×</span>
+      <span class="chip" id="chipSens2">双指 1.6×</span>
     </div>
   </section>
   <div id="kb"></div>
@@ -286,6 +313,21 @@
     </div>
   </div>
 </dialog>
+
+<div id="tools" hidden>
+  <div class="tools-h">快捷工具</div>
+  <div class="tools-grid">
+    <button class="tool" data-combo="ctrl+a">全选</button>
+    <button class="tool" data-clear="1">清空</button>
+    <button class="tool" data-combo="ctrl+c">复制</button>
+    <button class="tool" data-combo="ctrl+v">粘贴</button>
+    <button class="tool" data-combo="ctrl+x">剪切</button>
+    <button class="tool" data-combo="ctrl+z">撤销</button>
+    <button class="tool" data-combo="ctrl+y">重做</button>
+    <button class="tool" data-combo="ctrl+s">保存</button>
+    <button class="tool" data-combo="alt+tab">切窗</button>
+  </div>
+</div>
 
 <div id="toast"></div>
 
@@ -1131,8 +1173,31 @@
   const padFingers = $('#padFingers');
   padSurface.addEventListener('contextmenu', e => e.preventDefault());
 
-  const SENS = 2.5;
-  const SCROLL_SENS = 0.88;   // 滚动速度单独固定，避免调指针速度时连带变化
+  const SPEED_1 = [1.2, 1.6, 2.2, 2.5, 3.2, 4.0];
+  const SPEED_2 = [0.6, 0.88, 1.2, 1.6, 2.2];
+  let sens1 = Number(localStorage.getItem('kb.sens1')) || 3.2;
+  let sens2 = Number(localStorage.getItem('kb.sens2')) || 1.6;
+
+  function syncSensChips(){
+    $('#chipSens1').textContent = '单指 ' + sens1.toFixed(1) + '×';
+    $('#chipSens2').textContent = '双指 ' + sens2.toFixed(1) + '×';
+  }
+  function cycleOf(cur, list){
+    const i = list.indexOf(cur);
+    return list[(i < 0 ? 0 : i + 1) % list.length];
+  }
+  $('#chipSens1').addEventListener('click', () => {
+    sens1 = cycleOf(sens1, SPEED_1);
+    localStorage.setItem('kb.sens1', String(sens1));
+    syncSensChips();
+  });
+  $('#chipSens2').addEventListener('click', () => {
+    sens2 = cycleOf(sens2, SPEED_2);
+    localStorage.setItem('kb.sens2', String(sens2));
+    syncSensChips();
+  });
+  syncSensChips();
+
   let wakeLock = null;
 
   /* ================= 全屏锁定（键盘页常驻使用） ================= */
@@ -1286,8 +1351,8 @@
     const c = centroid();
 
     if (n === 1){
-      const dx = (c.x - lastC.x) * SENS;
-      const dy = (c.y - lastC.y) * SENS;
+      const dx = (c.x - lastC.x) * sens1;
+      const dy = (c.y - lastC.y) * sens1;
       moved += Math.abs(dx) + Math.abs(dy);
       padMove(dx, dy);
       lastC = c;
@@ -1296,7 +1361,7 @@
 
     if (n === 2){
       /* 双指只做上下滚动：忽略横向位移与两指间距变化（不做缩放） */
-      const dy = (c.y - lastC.y) * SCROLL_SENS;
+      const dy = (c.y - lastC.y) * sens2;
       if (Math.abs(dy) > 0.5){
         padSend({type:'scroll', dy: Math.round(dy)});
         scrolled = true;
@@ -1328,6 +1393,64 @@
 
   padSurface.addEventListener('pointerup', padPointerEnd);
   padSurface.addEventListener('pointercancel', padPointerEnd);
+
+  /* ================= 悬浮工具包（常用组合键） ================= */
+  const toolsPanel = $('#tools');
+
+  function postAsync(cmd){
+    return fetch(st.base + '/key', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cmd),
+      keepalive: true,
+      mode: 'cors',
+    }).then(r => {
+      if (!st.online) setOnline(true);
+      return r.ok;
+    }).catch(() => false);
+  }
+
+  function comboSpec(combo){
+    const parts = combo.split('+');
+    const key = parts.pop();
+    return {key, mods: parts, combo, label: combo.toUpperCase()};
+  }
+
+  function closeTools(){ toolsPanel.hidden = true; }
+
+  $('#btnTools').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toolsPanel.hidden = !toolsPanel.hidden;
+    haptic();
+  });
+
+  // 点面板外面自动收起
+  document.addEventListener('pointerdown', (e) => {
+    if (toolsPanel.hidden) return;
+    if (toolsPanel.contains(e.target) || e.target.closest('#btnTools')) return;
+    closeTools();
+  });
+
+  toolsPanel.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.tool');
+    if (!btn) return;
+    haptic();
+    if (btn.dataset.clear){
+      // 先全选再删除，一次清空当前输入框/文档内容
+      const ok = await postAsync(comboSpec('ctrl+a'));
+      if (ok){
+        await new Promise(r => setTimeout(r, 60));
+        await postAsync({key:'delete'});
+        toast('已清空');
+      } else {
+        toast('未连接，发送失败');
+      }
+    } else if (btn.dataset.combo){
+      const ok = await postAsync(comboSpec(btn.dataset.combo));
+      toast(ok ? btn.textContent : '未连接，发送失败');
+    }
+    closeTools();
+  });
 
   (async function boot(){
     const stored = localStorage.getItem('kb.base');
