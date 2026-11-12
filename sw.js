@@ -1,5 +1,5 @@
 /* Service Worker — 导航请求走网络优先，静态资源走缓存 */
-const CACHE = 'bt-keyboard-v9';
+const CACHE = 'bt-keyboard-v10';
 /* 桥接 API：绝不能走缓存，否则 /diag、/windows 会永远返回第一次的旧数据 */
 const API_PATHS = new Set([
   '/ping', '/health', '/diag', '/windows', '/target', '/key', '/hold', '/mouse',

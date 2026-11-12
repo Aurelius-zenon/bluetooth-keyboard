@@ -1239,7 +1239,7 @@
 
   /* ================= 全屏锁定（键盘页常驻使用） ================= */
   const FULL_KEY = 'kb.fullscreen';
-  let wantFull = localStorage.getItem(FULL_KEY) === '1';
+  let wantFull = localStorage.getItem(FULL_KEY) !== '0';   // 默认开启：首次触摸即进入全屏锁定
 
   function nativeFullscreen(on){
     const C = window.Capacitor;
@@ -1286,7 +1286,10 @@
   $('#btnFull').addEventListener('click', async () => {
     wantFull = !wantFull;
     localStorage.setItem(FULL_KEY, wantFull ? '1' : '0');
-    if (wantFull) await enterFull(); else await exitFull();
+    paintFull();                 // 先改 UI，避免 await 期间状态看不出来
+    try{
+      if (wantFull) await enterFull(); else await exitFull();
+    }catch(e){}
     haptic();
     toast(wantFull ? '全屏锁定已开启' : '全屏锁定已关闭');
   });
