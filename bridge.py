@@ -723,15 +723,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def _minimize_console():
-    """把当前控制台最小化，避免它占用前台焦点（SendInput 只发给前台窗口）"""
+    """把当前控制台最小化，避免它占用前台焦点（SendInput 只发给前台窗口）
+
+    返回 'none' 表示本来就没有控制台（pythonw 静默运行）。
+    """
     try:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
-            return True
+        if not hwnd:
+            return 'none'
+        ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+        return 'minimized'
     except Exception:
-        pass
-    return False
+        return 'failed'
 
 
 def main():
@@ -748,6 +751,16 @@ def main():
         gen_cert()
         return
 
+    # pythonw 静默运行（无控制台）时 sys.stdout 为 None，重定向到日志文件
+    if sys.stdout is None or sys.stderr is None:
+        try:
+            _log = open(os.path.join(STATIC_ROOT, 'bridge.log'), 'a', encoding='utf-8', buffering=1)
+            sys.stdout = _log
+            sys.stderr = _log
+            print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动 =====")
+        except Exception:
+            pass
+
     if args.tls and not (os.path.isfile(SERVER_CERT_FILE) and os.path.isfile(SERVER_KEY_FILE)):
         print("[!] 未找到证书，先自动生成…")
         if not gen_cert():
@@ -757,7 +770,12 @@ def main():
     consumer = threading.Thread(target=_consumer_loop, name='sendinput-consumer', daemon=True)
     consumer.start()
 
-    server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
+    except OSError as e:
+        print(f"[!] 端口 {args.port} 无法监听（可能已有一个桥接在运行）：{e}")
+        print("    如果平板已经能连上，就不用重复启动。")
+        return
 
     # 取本机局域网 IP
     lan_ip = '127.0.0.1'
@@ -810,9 +828,12 @@ def main():
 
     if not args.keep_window:
         time.sleep(1.0)
-        if _minimize_console():
+        state = _minimize_console()
+        if state == 'minimized':
             print("  [i] 控制台已自动最小化，按键会被送到前台程序")
             print("      想常驻窗口：python bridge.py --keep-window")
+        elif state == 'none':
+            print("  [i] 后台静默运行（无控制台窗口），日志见 bridge.log")
         else:
             print("  [i] 未能自动最小化，请手动点一下目标窗口")
 

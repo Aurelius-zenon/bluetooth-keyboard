@@ -39,3 +39,4 @@ server.key
 # 临时
 *.log
 *.tmp
+bridge.log

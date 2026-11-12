@@ -195,7 +195,8 @@
     <h3>设置</h3>
     <div class="field">
       <label>桥接地址（电脑上运行 bridge.py）</label>
-      <input id="inBase" placeholder="http://192.168.1.10:8888" autocomplete="off" spellcheck="false">
+      <input id="inBase" placeholder="https://192.168.1.10:8888" autocomplete="off" spellcheck="false">
+      <button class="btn" id="btnScan" style="width:100%;margin-top:8px">自动查找电脑</button>
     </div>
     <div class="field">
       <label>目标程序（锁定后每次按键前自动切到它，不依赖谁抢焦点）</label>
@@ -459,6 +460,7 @@
     dot.classList.toggle('ok', ok);
     dot.classList.toggle('err', !ok);
     stEl.textContent = ok ? ('已连接 · ' + st.base.replace(/^https?:\/\//,'')) : '未连接桥接';
+    if (ok) localStorage.setItem('kb.lastBase', st.base);
   }
 
   let pingCtrl = null;
@@ -487,9 +489,53 @@
           stEl.title = '非管理员运行：无法向管理员权限的程序输入';
         }
       }
+      return !!d.ok;
     }catch(e){
       setOnline(false);
+      return false;
     }
+  }
+
+  /* ================= 局域网自动发现 ================= */
+  const SCAN_PREFIXES = ['192.168.2','192.168.1','192.168.0','192.168.31','192.168.3','10.0.0'];
+
+  function probeHost(host){
+    return new Promise((resolve) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 900);
+      fetch('https://' + host + ':8888/ping', {signal: ctrl.signal, cache:'no-store'})
+        .then(r => r.json())
+        .then(j => { clearTimeout(timer); resolve(j && j.ok ? 'https://' + host + ':8888' : null); })
+        .catch(() => { clearTimeout(timer); resolve(null); });
+    });
+  }
+
+  async function scanPrefix(prefix, onProgress){
+    const CONC = 60;
+    for (let start = 1; start <= 254; start += CONC){
+      const batch = [];
+      for (let i = start; i < start + CONC && i <= 254; i++) batch.push(probeHost(prefix + '.' + i));
+      const res = await Promise.all(batch);
+      const hit = res.find(Boolean);
+      if (hit) return hit;
+      if (onProgress) onProgress(Math.min(start + CONC - 1, 254));
+    }
+    return null;
+  }
+
+  async function autoDiscover(onProgress){
+    const prefixes = [];
+    const last = localStorage.getItem('kb.lastBase');
+    if (last){
+      const m = last.match(/https?:\/\/(\d+\.\d+\.\d+)\./);
+      if (m) prefixes.push(m[1]);
+    }
+    SCAN_PREFIXES.forEach(p => { if (!prefixes.includes(p)) prefixes.push(p); });
+    for (const p of prefixes){
+      const hit = await scanPrefix(p, onProgress);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   function shortWin(t){
@@ -548,6 +594,20 @@
       list.innerHTML = '<div class="hint">读取失败，请确认桥接已连接</div>';
     }
   });
+  // 自动查找电脑
+  $('#btnScan').addEventListener('click', async () => {
+    const btn = $('#btnScan');
+    btn.textContent = '搜索中…';
+    const hit = await autoDiscover((n) => { btn.textContent = '搜索中… ' + n + '/254'; });
+    btn.textContent = '自动查找电脑';
+    if (hit){
+      inBase.value = hit;
+      toast('找到电脑：' + hit.replace('https://',''));
+    } else {
+      toast('没找到，请确认电脑上桥接已启动');
+    }
+  });
+
   $('#btnSave').addEventListener('click', () => {
     const v = inBase.value.trim();
     if (v){
@@ -592,13 +652,35 @@
   /* ================= 初始化 ================= */
   applyTheme(localStorage.getItem('kb.theme') || 'light');
   render();
-  ping();
-  setInterval(ping, 5000);
 
-  // HTTP 页面（bridge 托管）默认同源直连
-  if (location.protocol === 'http:' && !localStorage.getItem('kb.base')){
-    st.base = location.origin;
-  }
+  (async function boot(){
+    const stored = localStorage.getItem('kb.base');
+    if (stored) st.base = stored.replace(/\/+$/, '');
+
+    let ok = await ping();
+
+    // 同源直连（页面本身由 bridge 托管时）
+    if (!ok && st.base !== location.origin && location.protocol.startsWith('http')){
+      const prev = st.base;
+      st.base = location.origin;
+      ok = await ping();
+      if (!ok) st.base = prev;
+    }
+
+    // 都没连上 → 自动扫描局域网
+    if (!ok){
+      $('#st').textContent = '搜索电脑中…';
+      const hit = await autoDiscover((n) => { $('#st').textContent = '搜索电脑中… 已扫 ' + n; });
+      if (hit){
+        st.base = hit;
+        localStorage.setItem('kb.base', hit);
+        toast('已连上电脑');
+      }
+      await ping();
+    }
+
+    setInterval(ping, 5000);
+  })();
 
   // Service Worker（离线缓存 + 可安装）
   if ('serviceWorker' in navigator){
