@@ -1,5 +1,9 @@
 /* Service Worker — 导航请求走网络优先，静态资源走缓存 */
-const CACHE = 'bt-keyboard-v3';
+const CACHE = 'bt-keyboard-v4';
+/* 桥接 API：绝不能走缓存，否则 /diag、/windows 会永远返回第一次的旧数据 */
+const API_PATHS = new Set([
+  '/ping', '/health', '/diag', '/windows', '/target', '/key', '/hold', '/mouse',
+]);
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -32,7 +36,7 @@ self.addEventListener('fetch', (e) => {
   // 只接管同源 GET
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
   // 桥接接口不缓存
-  if (url.pathname === '/ping' || url.pathname === '/key') return;
+  if (API_PATHS.has(url.pathname)) return;
 
   // 页面导航：网络优先，失败回落缓存
   if (req.mode === 'navigate') {

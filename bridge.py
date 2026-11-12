@@ -30,9 +30,16 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 STATIC_ROOT = os.path.dirname(os.path.abspath(__file__))
-STATIC_FILES = {
-    '/index.html', '/manifest.webmanifest', '/sw.js',
+MAX_BODY = 8192            # 单个请求体上限（防内存滥用）
+# 静态资源白名单：只有这些路径可以对外提供，证书/日志/私钥一律不给
+STATIC_ALLOWED = {'index.html', 'sw.js', 'manifest.webmanifest', '.well-known/assetlinks.json'}
+# 允许跨源访问的 Origin 主机名（含 Capacitor 容器、回环地址、GitHub Pages 部署域名）
+ORIGIN_HOST_ALLOW = {
+    'localhost', '127.0.0.1', '::1', 'bluetoothkeyboard.local',
+    'aurelius-zenon.github.io',
 }
+_extra_origins = []        # --allow-origin 追加的完整 Origin
+_local_host_cache = None
 
 # TLS 证书文件（--gen-cert 生成）
 CA_CERT_FILE = os.path.join(STATIC_ROOT, 'ca.crt')
@@ -56,6 +63,30 @@ def _local_ips():
     except Exception:
         pass
     return sorted(ips)
+
+
+def _local_host_set() -> set:
+    """本机 IP / 主机名集合（缓存，避免每次请求都做 getaddrinfo）"""
+    global _local_host_cache
+    if _local_host_cache is None:
+        hosts = set(_local_ips())
+        try:
+            hosts.add(socket.gethostname().lower())
+        except Exception:
+            pass
+        name = os.environ.get('COMPUTERNAME')
+        if name:
+            hosts.add(name.lower())
+        _local_host_cache = hosts
+    return _local_host_cache
+
+
+def _static_allowed(rel: str) -> bool:
+    """判断相对路径是否属于可公开的静态资源"""
+    rel = rel.replace('\\', '/')
+    if rel in STATIC_ALLOWED:
+        return True
+    return rel.startswith('icons/') and rel.endswith('.png')
 
 
 def gen_cert():
@@ -116,6 +147,15 @@ def gen_cert():
         .sign(ca_key, hashes.SHA256())
     )
 
+    # 覆盖前先备份，避免平板已安装的旧 CA 静默失效后无从恢复
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    for p in (CA_CERT_FILE, SERVER_CERT_FILE, SERVER_KEY_FILE):
+        if os.path.isfile(p):
+            try:
+                os.replace(p, f'{p}.{stamp}.bak')
+            except Exception:
+                pass
+
     with open(CA_CERT_FILE, 'wb') as f:
         f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
     with open(SERVER_CERT_FILE, 'wb') as f:
@@ -132,6 +172,7 @@ def gen_cert():
     print(f"  {CA_CERT_FILE}      ← 传到平板安装为「CA 证书」")
     print(f"  {SERVER_CERT_FILE}")
     print(f"  {SERVER_KEY_FILE}")
+    print("  旧证书已重命名为 *.bak（平板需重新安装新 CA）")
     print()
     print("SAN 覆盖的地址：localhost, " + ', '.join(_local_ips()))
     print()
@@ -282,9 +323,8 @@ _stats = {
     'sent': 0, 'failed': 0,
     'last_key': '', 'last_combo': '', 'last_fg': '',
     'last_ok': None, 'last_err': 0, 'last_ts': 0.0,
-    'elevated': False,
+    'elevated': False, 'denied': 0,
 }
-_last_foreground = ''
 
 
 def send_vk(vk_code: int, is_up: bool = False) -> bool:
@@ -451,12 +491,13 @@ def press_vk(vk_code: int) -> bool:
 _SEND_GAP = 0.003  # 3ms，SendInput 之间的微小间隔（Windows 需要）
 
 
-def send_command(command: dict):
+def send_command(command: dict) -> bool:
     """
     原子发送一个键盘命令。command dict 来自原型 HTTP POST:
       {"key":"c", "mods":["ctrl"], "combo":"ctrl+c", "label":"Ctrl+C 复制"}
       {"key":"win", "mods":[]}                ← 单独 Win 键（不处理）
       {"key":"hello-world", "mods":[]}        ← 测试指令
+    返回是否真正发出了按键（未知键/裸修饰键返回 False）。
     """
     raw_key = command.get('key', '')
     mods: list[str] = command.get('mods') or []
@@ -465,13 +506,13 @@ def send_command(command: dict):
     # ---- 测试指令 ----
     if raw_key == 'hello-world':
         print(f"  [bridge] 测试 OK → Hello")
-        return
+        return True
 
     # ---- 跳过裸修饰键 ----
     # ctrl/alt/win 由 /hold 接口负责按住；单独的 shift 是一次"轻敲"，
     # 用于切换输入法中/英（微软拼音、搜狗等默认都是 Shift）。
     if raw_key in ('ctrl','alt','win','cmd','win_r') and not mods:
-        return
+        return False
 
     # ---- 单独 Shift：中/英切换（保持 30ms 按下，部分输入法需要更长的 keydown）----
     if raw_key == 'shift' and not mods:
@@ -484,7 +525,7 @@ def send_command(command: dict):
         _stats['last_ok'] = True
         _stats['last_ts'] = time.time()
         print("  [bridge] ⌨  SHIFT  (切换中/英)")
-        return
+        return True
 
     # ---- 解析修饰键 ----
     mod_vks: list[int] = []
@@ -510,7 +551,7 @@ def send_command(command: dict):
             main_vks.append(VK_CODE[k])
         else:
             print(f"  [bridge] ⚠ 未知按键: {raw_key!r}  ({label})")
-            return
+            return False
 
     # 合并所有需要先 keyDown 的修饰键
     all_down = mod_vks + extra_mod_vks
@@ -538,6 +579,7 @@ def send_command(command: dict):
         print(f"  [bridge] ⌨  {mod_str}+{raw_key.upper() if len(raw_key)==1 else raw_key}  ({label})")
     else:
         print(f"  [bridge] ⌨  {raw_key.upper() if len(raw_key)==1 else raw_key}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +614,24 @@ def _mouse_event(flags: int, dx: int = 0, dy: int = 0, data: int = 0):
         pass
 
 
+# 触控板给的是像素位移，滚轮一格 = 120；先累积再按格发送，否则小步长会被应用忽略
+_wheel_acc = [0, 0]
+_WHEEL_UNIT = 40
+
+
+def _wheel(vertical: bool, delta: int):
+    i = 1 if vertical else 0
+    _wheel_acc[i] += int(delta)
+    notches = int(_wheel_acc[i] / _WHEEL_UNIT)
+    if notches == 0:
+        return
+    _wheel_acc[i] -= notches * _WHEEL_UNIT
+    if vertical:
+        _mouse_event(MOUSEEVENTF_WHEEL, 0, 0, notches * 120)
+    else:
+        _mouse_event(MOUSEEVENTF_HWHEEL, 0, 0, notches * 120)
+
+
 def _apply_mouse(item: dict):
     kind = item.get('type')
 
@@ -594,9 +654,9 @@ def _apply_mouse(item: dict):
         dy = int(item.get('dy') or 0)
         dx = int(item.get('dx') or 0)
         if dy:
-            _mouse_event(MOUSEEVENTF_WHEEL, 0, 0, dy)
+            _wheel(True, dy)
         if dx:
-            _mouse_event(MOUSEEVENTF_HWHEEL, 0, 0, dx)
+            _wheel(False, dx)
 
     elif kind == 'zoom':
         # 捏合缩放 = Ctrl + 滚轮（若 Ctrl 已被锁定按住则不再重复按）
@@ -699,6 +759,12 @@ def _release_all_held(reason=''):
         print(f"  [bridge] ⇧ 释放全部修饰键 [{names}] {reason}")
 
 
+def _held_snapshot():
+    """线程安全地取当前按住的修饰键名（/diag 用）"""
+    with _held_lock:
+        return sorted(_held_vks.values())
+
+
 def _hold_watchdog():
     """安全阀：20 秒无操作自动松开，避免 Ctrl 一直卡在按下状态"""
     while True:
@@ -727,7 +793,7 @@ _start_time = time.monotonic()
 
 def _consumer_loop():
     """单消费者线程：串行消费队列，调用 SendInput"""
-    global _last_foreground, _last_activity
+    global _last_activity
     while True:
         cmd = _command_queue.get()
 
@@ -743,11 +809,12 @@ def _consumer_loop():
         _last_activity = time.time()
         fg = _foreground_title()
         before_fail = _stats['failed']
+        ok = False
         try:
             if _target_hwnd:
                 focus_target()
                 time.sleep(0.03)   # 等窗口真正激活
-            send_command(cmd)
+            ok = send_command(cmd)
         except Exception as e:
             _stats['failed'] += 1
             _stats['last_err'] = str(e)
@@ -757,9 +824,8 @@ def _consumer_loop():
         _stats['last_key'] = cmd.get('key', '')
         _stats['last_combo'] = cmd.get('combo') or ''
         _stats['last_fg'] = fg
-        _stats['last_ok'] = (_stats['failed'] == before_fail)
+        _stats['last_ok'] = ok and (_stats['failed'] == before_fail)
         _stats['last_ts'] = time.time()
-        _last_foreground = fg
 
 
 # ---------------------------------------------------------------------------
@@ -769,16 +835,56 @@ def _consumer_loop():
 class BridgeHandler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     server_version = 'KeyboardBridge/1.1'
+    timeout = 120          # 慢连接不许无限占线程；留足空闲 keep-alive 余量
 
     def log_message(self, fmt, *args):
         pass  # 静默默认日志
 
+    # ---- 来源校验：挡住"浏览器里随便一个网页就能注入按键" ----
+    def _origin_ok(self) -> bool:
+        origin = self.headers.get('Origin')
+        if not origin:
+            return True                      # 原生 App / curl / 同源导航不带 Origin
+        if origin in _extra_origins:
+            return True
+        host = (urlparse(origin).hostname or '').lower()
+        if not host:
+            return False
+        return host in ORIGIN_HOST_ALLOW or host in _local_host_set()
+
+    def _deny_origin(self):
+        origin = self.headers.get('Origin') or '(none)'
+        _stats['denied'] += 1
+        print(f"  [bridge] ✗ 拒绝来源: {origin}")
+        self.close_connection = True
+        body = json.dumps({'ok': False, 'error': 'origin not allowed'}).encode()
+        self.send_response(403)
+        self.send_header('Connection', 'close')   # 必须告知客户端，否则连接池会复用到已关闭的 socket
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     # ---- CORS ----
     def _cors(self, extra: str = ''):
-        self.send_header('Access-Control-Allow-Origin', '*')
+        origin = self.headers.get('Origin')
+        self.send_header('Access-Control-Allow-Origin', origin if origin else '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.send_header('Content-Type', 'application/json')
+
+    # ---- 读取 JSON（带上限；超限直接断开，避免连接错位）----
+    def _read_json(self, default=None):
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length > MAX_BODY:
+            self.close_connection = True
+            raise ValueError(f'body too large ({length} > {MAX_BODY})')
+        raw = self.rfile.read(length).decode('utf-8') if length > 0 else ''
+        if not raw:
+            return {} if default is None else default
+        return json.loads(raw)
 
     # ---- 预检 ----
     def do_OPTIONS(self):
@@ -806,6 +912,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         # 诊断：按键发给了哪个窗口、SendInput 是否成功
         if path == '/diag':
+            if not self._origin_ok():
+                self._deny_origin()
+                return
             _t = {'hwnd': _target_hwnd, 'title': ''}
             if _target_hwnd:
                 _t['title'] = _hwnd_title(_target_hwnd)
@@ -815,7 +924,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 'target': _t,
                 'queue_size': _command_queue.qsize(),
                 'elevated': _stats['elevated'],
-                'held': sorted(_held_vks.values()),
+                'held': _held_snapshot(),
                 'last': {
                     'key': _stats['last_key'],
                     'combo': _stats['last_combo'],
@@ -826,6 +935,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 },
                 'sent': _stats['sent'],
                 'failed': _stats['failed'],
+                'denied': _stats['denied'],
             }).encode()
             self.send_response(200)
             self._cors()
@@ -836,6 +946,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         # 可选目标窗口列表
         if path == '/windows':
+            if not self._origin_ok():
+                self._deny_origin()
+                return
             wins = list_windows()
             # 过滤掉过短/无意义的标题
             wins = [w for w in wins if len(w['title'].strip()) >= 1][:40]
@@ -854,9 +967,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if path == '/':
             path = '/index.html'
         safe = os.path.normpath(path).lstrip('\\/').replace('\\', '/')
-        full = os.path.abspath(os.path.join(STATIC_ROOT, safe))
-        if not full.startswith(STATIC_ROOT) or not os.path.isfile(full):
+        root = os.path.realpath(STATIC_ROOT)
+        try:
+            full = os.path.realpath(os.path.join(root, safe))
+            inside = os.path.commonpath([root, full]) == root
+        except (ValueError, OSError):
+            inside, full = False, ''
+        rel = os.path.relpath(full, root).replace('\\', '/') if inside else ''
+        if not inside or not _static_allowed(rel) or not os.path.isfile(full):
             self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', '2')
             self.end_headers()
             self.wfile.write(b'{}')
@@ -876,14 +996,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
     # ---- POST /key ----
     def do_POST(self):
         global _target_hwnd
+        if not self._origin_ok():
+            self._deny_origin()
+            return
         path = urlparse(self.path).path
 
         # 设置/清除 目标窗口
         if path == '/target':
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
-                data = json.loads(raw or '{}')
+                data = self._read_json()
                 hwnd = int(data.get('hwnd') or 0)
             except Exception as e:
                 body = json.dumps({'ok': False, 'error': str(e)}).encode()
@@ -897,9 +1018,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # 长按锁定：物理按住 / 释放修饰键
         if path == '/hold':
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
-                data = json.loads(raw or '{}')
+                data = self._read_json()
                 down = [str(x).lower() for x in (data.get('down') or [])]
                 up = [str(x).lower() for x in (data.get('up') or [])]
                 if down or up:
@@ -921,9 +1040,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # 鼠标 / 触控板手势
         if path == '/mouse':
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                raw = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
-                data = json.loads(raw or '{}')
+                data = self._read_json()
                 _mouse_queue.put_nowait(data)
                 body = json.dumps({'ok': True, 'queued': True}).encode()
                 self.send_response(202)
@@ -945,9 +1062,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         # 解析 JSON
         try:
-            length = int(self.headers.get('Content-Length', 0))
-            raw = self.rfile.read(length).decode('utf-8') if length > 0 else ''
-            cmd = json.loads(raw) if raw else {}
+            cmd = self._read_json()
         except Exception as e:
             body = json.dumps({'ok': False, 'error': f'bad json: {e}'}).encode()
             self.send_response(400); self._cors(); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -987,6 +1102,7 @@ def _minimize_console():
 
 
 def main():
+    global _extra_origins
     parser = argparse.ArgumentParser(description='高性能平板触屏键盘桥接')
     parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8888)
@@ -994,7 +1110,11 @@ def main():
     parser.add_argument('--keep-window', action='store_true', help='不自动最小化控制台')
     parser.add_argument('--tls', action='store_true', help='启用 HTTPS（需先 --gen-cert 生成证书）')
     parser.add_argument('--gen-cert', action='store_true', help='生成本地 CA 与服务器证书后退出')
+    parser.add_argument('--allow-origin', action='append', default=[],
+                        help='额外允许的网页来源（如 https://name.github.io），可重复')
     args = parser.parse_args()
+
+    _extra_origins.extend(args.allow_origin or [])
 
     if args.gen_cert:
         gen_cert()
@@ -1088,6 +1208,7 @@ def main():
     print("    先用鼠标点一下目标程序（记事本 / 浏览器输入框等），再按平板键盘")
     print("    切换窗口：平板上按 Alt → Tab")
     print("    要往管理员权限的程序输入：请以管理员身份运行本脚本")
+    print("    只接受本机地址 / Capacitor 容器的网页调用；其它来源需加 --allow-origin")
     print()
 
     if args.bench:
