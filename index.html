@@ -1326,7 +1326,7 @@
 
   const pts = new Map();
   let startT = 0, lastC = null, maxF = 0, movedPx = 0, scrolled = false;
-  let tap3At = 0, tap3Timer = 0;
+  let tap3At = 0, tap3Timer = 0, tap4At = 0, tap4Timer = 0;
 
   /* 收起/重连时清空残留的指头状态，避免按错指头数 */
   resetPadState = () => {
@@ -1334,6 +1334,7 @@
     drawFingers(0);
     scrolled = false; maxF = 0; movedPx = 0;
     clearTimeout(tap3Timer); tap3At = 0;
+    clearTimeout(tap4Timer); tap4At = 0;
   };
 
   function centroid(){
@@ -1414,8 +1415,7 @@
       // 三指/四指轻点
       if (maxF === 3){ threeFingerTap(); return; }
       if (maxF >= 4){
-        postAsync(comboSpec('ctrl+win+right'));
-        haptic();
+        fourFingerTap();
         return;
       }
       padSend({type:'click', button: maxF === 2 ? 'right' : 'left'});
@@ -1432,6 +1432,19 @@
     } else {
       tap3At = now;
       tap3Timer = setTimeout(() => { tap3At = 0; postAsync(comboSpec('win+tab')); }, 300);
+    }
+    haptic();
+  }
+
+  /* 四指单击 = 左切桌面；450ms 内的第二次四指轻点 = 右切桌面 */
+  function fourFingerTap(){
+    const now = performance.now();
+    if (tap4At && now - tap4At < 450){
+      clearTimeout(tap4Timer); tap4At = 0;
+      postAsync(comboSpec('ctrl+win+right'));
+    } else {
+      tap4At = now;
+      tap4Timer = setTimeout(() => { tap4At = 0; postAsync(comboSpec('ctrl+win+left')); }, 300);
     }
     haptic();
   }
