@@ -1325,13 +1325,15 @@
   }
 
   const pts = new Map();
-  let startT = 0, lastC = null, maxF = 0, moved = 0, scrolled = false;
+  let startT = 0, lastC = null, maxF = 0, movedPx = 0, scrolled = false;
+  let tap3At = 0, tap3Timer = 0;
 
   /* 收起/重连时清空残留的指头状态，避免按错指头数 */
   resetPadState = () => {
     pts.clear();
     drawFingers(0);
-    scrolled = false; maxF = 0; moved = 0;
+    scrolled = false; maxF = 0; movedPx = 0;
+    clearTimeout(tap3Timer); tap3At = 0;
   };
 
   function centroid(){
@@ -1341,7 +1343,7 @@
     return {x: x / n, y: y / n};
   }
   function drawFingers(n){
-    const count = Math.min(n, 2);
+    const count = Math.min(n, 4);
     if (padFingers.childElementCount !== count){
       padFingers.innerHTML = '<i></i>'.repeat(count);
     }
@@ -1355,7 +1357,7 @@
     if (pts.size === 1){
       startT = performance.now();
       lastC = centroid();
-      maxF = 1; moved = 0; scrolled = false;
+      maxF = 1; movedPx = 0; scrolled = false;
     }
     if (pts.size === 2){
       lastC = centroid();
@@ -1368,6 +1370,8 @@
   padSurface.addEventListener('pointermove', (e) => {
     if (!pts.has(e.pointerId)) return;
     e.preventDefault();
+    const prev = pts.get(e.pointerId);
+    movedPx += Math.hypot(e.clientX - prev.x, e.clientY - prev.y);
     pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
     const n = pts.size;
     const c = centroid();
@@ -1375,7 +1379,6 @@
     if (n === 1){
       const dx = (c.x - lastC.x) * sens1;
       const dy = (c.y - lastC.y) * sens1;
-      moved += Math.abs(dx) + Math.abs(dy);
       padMove(dx, dy);
       lastC = c;
       return;
@@ -1407,10 +1410,30 @@
     }
 
     const dt = performance.now() - startT;
-    if (dt < 320 && moved < 12 && !scrolled){
+    if (dt < 320 && movedPx < 14 && !scrolled){
+      // 三指/四指轻点
+      if (maxF === 3){ threeFingerTap(); return; }
+      if (maxF >= 4){
+        postAsync(comboSpec('ctrl+win+right'));
+        haptic();
+        return;
+      }
       padSend({type:'click', button: maxF === 2 ? 'right' : 'left'});
       haptic();
     }
+  }
+
+  /* 三指单击 = Win+Tab；300ms 内的第二次三指轻点 = Alt+Tab */
+  function threeFingerTap(){
+    const now = performance.now();
+    if (tap3At && now - tap3At < 450){
+      clearTimeout(tap3Timer); tap3At = 0;
+      postAsync(comboSpec('alt+tab'));
+    } else {
+      tap3At = now;
+      tap3Timer = setTimeout(() => { tap3At = 0; postAsync(comboSpec('win+tab')); }, 300);
+    }
+    haptic();
   }
 
   padSurface.addEventListener('pointerup', padPointerEnd);
